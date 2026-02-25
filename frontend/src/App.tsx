@@ -87,6 +87,7 @@ function App() {
   const [massImportResult, setMassImportResult] = useState<MassImportResponse | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [selectedAccountIds, setSelectedAccountIds] = useState<Set<number>>(new Set());
 
   const [newAccount, setNewAccount] = useState({
     username: "",
@@ -115,6 +116,20 @@ function App() {
     const start = (currentPage - 1) * ACCOUNTS_PER_PAGE;
     return accounts.slice(start, start + ACCOUNTS_PER_PAGE);
   }, [accounts, currentPage]);
+  const ownAccounts = useMemo(
+    () => accounts.filter((account) => currentUserId !== null && account.owner_id === currentUserId),
+    [accounts, currentUserId],
+  );
+  const ownPaginatedAccounts = useMemo(
+    () => paginatedAccounts.filter((account) => currentUserId !== null && account.owner_id === currentUserId),
+    [paginatedAccounts, currentUserId],
+  );
+  const selectedOwnAccounts = useMemo(
+    () => ownAccounts.filter((account) => selectedAccountIds.has(account.id)),
+    [ownAccounts, selectedAccountIds],
+  );
+  const allOwnOnPageSelected =
+    ownPaginatedAccounts.length > 0 && ownPaginatedAccounts.every((account) => selectedAccountIds.has(account.id));
 
   useEffect(() => {
     const hash = window.location.hash.replace(/^#/, "");
@@ -180,6 +195,24 @@ function App() {
       setCurrentPage(totalPages);
     }
   }, [currentPage, totalPages]);
+
+  useEffect(() => {
+    if (currentUserId === null) {
+      setSelectedAccountIds(new Set());
+      return;
+    }
+
+    const ownIds = new Set(ownAccounts.map((account) => account.id));
+    setSelectedAccountIds((previous) => {
+      const next = new Set<number>();
+      for (const id of previous) {
+        if (ownIds.has(id)) {
+          next.add(id);
+        }
+      }
+      return next;
+    });
+  }, [currentUserId, ownAccounts]);
 
   useEffect(() => {
     if (!token) {
@@ -413,7 +446,83 @@ function App() {
     setToken("");
     setAccounts([]);
     setGeneratedApiKey("");
+    setSelectedAccountIds(new Set());
     localStorage.removeItem("kuroi_token");
+  };
+
+  const escapeCsvValue = (value: string | number | boolean | null | undefined) => {
+    const text = value === null || value === undefined ? "" : String(value);
+    return `"${text.replace(/"/g, '""')}"`;
+  };
+
+  const downloadAccountsCsv = (rows: Account[], fileName: string) => {
+    if (!rows.length) {
+      setError("No accounts to export");
+      return;
+    }
+
+    const header = ["id", "username", "email", "password", "ban_type", "vac_live_remaining", "is_public", "created_at"];
+    const csvLines = [
+      header.join(","),
+      ...rows.map((account) =>
+        [
+          account.id,
+          account.username,
+          account.email,
+          account.password,
+          account.ban_type,
+          account.vac_live_remaining ?? "",
+          account.is_public,
+          account.created_at,
+        ]
+          .map((value) => escapeCsvValue(value))
+          .join(","),
+      ),
+    ];
+
+    const blob = new Blob([csvLines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportAllOwnAccounts = () => {
+    setError("");
+    downloadAccountsCsv(ownAccounts, "kuroi-accounts-all.csv");
+  };
+
+  const handleExportSelectedAccounts = () => {
+    setError("");
+    downloadAccountsCsv(selectedOwnAccounts, "kuroi-accounts-selected.csv");
+  };
+
+  const toggleAccountSelection = (accountId: number) => {
+    setSelectedAccountIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(accountId)) {
+        next.delete(accountId);
+      } else {
+        next.add(accountId);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAllOnPage = () => {
+    setSelectedAccountIds((previous) => {
+      const next = new Set(previous);
+      if (allOwnOnPageSelected) {
+        ownPaginatedAccounts.forEach((account) => next.delete(account.id));
+      } else {
+        ownPaginatedAccounts.forEach((account) => next.add(account.id));
+      }
+      return next;
+    });
   };
 
   return (
@@ -465,7 +574,7 @@ function App() {
               <button className="anime-secondary-button px-4 py-2" onClick={() => loadAccounts()}>
                 Refresh
               </button>
-              <label className="anime-input flex items-center gap-2 px-3 py-2">
+              <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-sm text-zinc-100">
                 <input type="checkbox" checked={showPublicAccounts} onChange={(event) => handlePublicToggle(event.target.checked)} />
                 Show public accounts
               </label>
@@ -504,7 +613,7 @@ function App() {
                 </>
               )}
 
-              <label className="anime-input flex items-center gap-2">
+              <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-sm text-zinc-100">
                 <input type="checkbox" checked={newAccount.is_public} onChange={(event) => setNewAccount({ ...newAccount, is_public: event.target.checked })} />
                 Public visibility
               </label>
@@ -538,7 +647,7 @@ function App() {
                     </select>
                   </>
                 )}
-                <label className="anime-input flex items-center gap-2">
+                <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-sm text-zinc-100">
                   <input type="checkbox" checked={editAccount.is_public} onChange={(event) => setEditAccount({ ...editAccount, is_public: event.target.checked })} />
                   Public visibility
                 </label>
@@ -555,6 +664,14 @@ function App() {
               <table className="min-w-full divide-y divide-zinc-700/60">
                 <thead className="bg-zinc-900/70">
                   <tr>
+                    <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">
+                      <input
+                        type="checkbox"
+                        checked={allOwnOnPageSelected}
+                        disabled={ownPaginatedAccounts.length === 0}
+                        onChange={toggleSelectAllOnPage}
+                      />
+                    </th>
                     <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">Avatar</th>
                     <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">Username</th>
                     <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">Email</th>
@@ -568,6 +685,17 @@ function App() {
                 <tbody className="divide-y divide-zinc-700/50">
                   {paginatedAccounts.map((account) => (
                     <tr key={account.id} className="hover:bg-zinc-800/35">
+                      <td className="px-4 py-3">
+                        {currentUserId === account.owner_id ? (
+                          <input
+                            type="checkbox"
+                            checked={selectedAccountIds.has(account.id)}
+                            onChange={() => toggleAccountSelection(account.id)}
+                          />
+                        ) : (
+                          <span className="text-xs text-zinc-500">-</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3">
                         {account.avatar_url ? <img src={account.avatar_url} alt="Avatar" className="h-9 w-9 rounded-full border border-zinc-600" /> : <div className="h-9 w-9 rounded-full bg-zinc-700" />}
                       </td>
@@ -595,6 +723,23 @@ function App() {
                   ))}
                 </tbody>
               </table>
+            </div>
+
+            <div className="anime-panel flex flex-wrap items-center justify-between gap-3 rounded-3xl p-4 text-sm">
+              <p className="text-zinc-300">Export only accounts you created.</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" className="anime-secondary-button px-3 py-2" onClick={handleExportAllOwnAccounts}>
+                  Export All My Accounts ({ownAccounts.length})
+                </button>
+                <button
+                  type="button"
+                  className="anime-secondary-button px-3 py-2 disabled:opacity-50"
+                  onClick={handleExportSelectedAccounts}
+                  disabled={selectedOwnAccounts.length === 0}
+                >
+                  Export Selected ({selectedOwnAccounts.length})
+                </button>
+              </div>
             </div>
 
             <div className="anime-panel flex items-center justify-between rounded-3xl p-4 text-sm">
@@ -640,7 +785,7 @@ function App() {
             <form onSubmit={handleCreateApiKey} className="anime-panel rounded-3xl p-4">
               <p className="mb-3 text-sm text-zinc-300">Create an API key for script-based account imports (Stace-style automation).</p>
               <div className="grid gap-3 md:grid-cols-[1fr_auto]">
-                <p className="anime-input flex items-center">Default key name: automation-script</p>
+                <p className="flex items-center rounded-xl border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-zinc-200">Default key name: automation-script</p>
                 <button className="anime-primary-button px-4">Generate API Key</button>
               </div>
               {generatedApiKey && (
@@ -672,7 +817,7 @@ function App() {
                 value={massImportContent}
                 onChange={(event) => setMassImportContent(event.target.value)}
               />
-              <label className="anime-input flex items-center gap-2 px-3 py-2">
+              <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-sm text-zinc-100">
                 <input type="checkbox" checked={massImportPublic} onChange={(event) => setMassImportPublic(event.target.checked)} />
                 Imported accounts are public
               </label>
