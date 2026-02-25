@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from jose import JWTError, jwt
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import inspect
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from .database import Base, engine, get_db
@@ -114,7 +114,24 @@ def ensure_schema_extensions() -> None:
             connection.exec_driver_sql("ALTER TABLE steam_accounts ADD COLUMN vac_live_expires_at TIMESTAMP")
 
 
+def ensure_account_unique_constraints() -> None:
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_steam_accounts_username_ci ON steam_accounts (lower(username))"
+            )
+            connection.exec_driver_sql(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_steam_accounts_email_ci ON steam_accounts (lower(email))"
+            )
+    except Exception as exc:
+        raise RuntimeError(
+            "Could not create unique account indexes for username/email. "
+            "Please remove duplicate account usernames/emails and restart."
+        ) from exc
+
+
 ensure_schema_extensions()
+ensure_account_unique_constraints()
 validate_runtime_config()
 
 
@@ -327,6 +344,29 @@ def create_account_record(
         vac_live_expires_at=vac_live_expires_at,
         avatar_url=None,
     )
+
+
+def ensure_account_identity_unique(
+    db: Session,
+    *,
+    username: str,
+    email: str,
+    exclude_account_id: int | None = None,
+) -> None:
+    normalized_username = username.strip().lower()
+    normalized_email = email.strip().lower()
+
+    username_query = select(SteamAccount.id).where(func.lower(SteamAccount.username) == normalized_username)
+    email_query = select(SteamAccount.id).where(func.lower(SteamAccount.email) == normalized_email)
+
+    if exclude_account_id is not None:
+        username_query = username_query.where(SteamAccount.id != exclude_account_id)
+        email_query = email_query.where(SteamAccount.id != exclude_account_id)
+
+    if db.scalar(username_query) is not None:
+        raise HTTPException(status_code=409, detail="Username already exists")
+    if db.scalar(email_query) is not None:
+        raise HTTPException(status_code=409, detail="Email already exists")
 
 
 @app.get("/health")
@@ -630,6 +670,8 @@ async def create_account(
     actor: User = Depends(resolve_actor),
     db: Session = Depends(get_db),
 ):
+    ensure_account_identity_unique(db, username=payload.username, email=payload.email)
+
     account = create_account_record(
         actor_id=actor.id,
         username=payload.username,
@@ -654,6 +696,8 @@ def mass_import_accounts(
 ):
     errors: list[MassImportError] = []
     created = 0
+    seen_usernames: set[str] = set()
+    seen_emails: set[str] = set()
 
     for line_number, raw_line in enumerate(payload.content.splitlines(), start=1):
         line = raw_line.strip()
@@ -674,6 +718,29 @@ def mass_import_accounts(
             errors.append(MassImportError(line=line_number, message="Invalid email format", raw=raw_line))
             continue
 
+        normalized_username = username.lower()
+        normalized_email = email.lower()
+        if normalized_username in seen_usernames:
+            errors.append(MassImportError(line=line_number, message="Username is duplicated in import", raw=raw_line))
+            continue
+        if normalized_email in seen_emails:
+            errors.append(MassImportError(line=line_number, message="Email is duplicated in import", raw=raw_line))
+            continue
+
+        existing_username = db.scalar(
+            select(SteamAccount.id).where(func.lower(SteamAccount.username) == normalized_username)
+        )
+        if existing_username is not None:
+            errors.append(MassImportError(line=line_number, message="Username already exists", raw=raw_line))
+            continue
+
+        existing_email = db.scalar(
+            select(SteamAccount.id).where(func.lower(SteamAccount.email) == normalized_email)
+        )
+        if existing_email is not None:
+            errors.append(MassImportError(line=line_number, message="Email already exists", raw=raw_line))
+            continue
+
         try:
             account = create_account_record(
                 actor_id=actor.id,
@@ -686,6 +753,8 @@ def mass_import_accounts(
             db.add(account)
             db.commit()
             created += 1
+            seen_usernames.add(normalized_username)
+            seen_emails.add(normalized_email)
         except Exception as exc:
             db.rollback()
             errors.append(MassImportError(line=line_number, message=f"Could not create account: {exc}", raw=raw_line))
@@ -724,6 +793,13 @@ def update_account(
         raise HTTPException(status_code=404, detail="Account not found")
     if account.owner_id != user.id:
         raise HTTPException(status_code=403, detail="Only the account owner can edit this account")
+
+    ensure_account_identity_unique(
+        db,
+        username=payload.username,
+        email=payload.email,
+        exclude_account_id=account.id,
+    )
 
     account.username = payload.username
     account.password = encrypt_account_password(payload.password, settings.app_secret)
