@@ -48,6 +48,8 @@ type MassImportResponse = {
   errors: MassImportError[];
 };
 
+type SortOption = "mm_ready" | "mm_not_ready" | "newest" | "oldest" | "username_asc" | "username_desc";
+
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 const oidcEnabledFromEnv = (import.meta.env.VITE_OIDC_ENABLED ?? "false") === "true";
 
@@ -75,6 +77,7 @@ function App() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [banFilter, setBanFilter] = useState<"all" | BanType>("all");
+  const [sortOption, setSortOption] = useState<SortOption>("mm_ready");
   const [showPublicAccounts, setShowPublicAccounts] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [error, setError] = useState("");
@@ -113,15 +116,51 @@ function App() {
   });
 
   const isLoggedIn = useMemo(() => token.length > 0, [token]);
-  const totalPages = useMemo(() => Math.max(1, Math.ceil(accounts.length / ACCOUNTS_PER_PAGE)), [accounts.length]);
+  const sortedAccounts = useMemo(() => {
+    const items = [...accounts];
+
+    if (sortOption === "mm_ready") {
+      return items.sort((a, b) => {
+        if (a.matchmaking_ready !== b.matchmaking_ready) {
+          return Number(b.matchmaking_ready) - Number(a.matchmaking_ready);
+        }
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
+    }
+
+    if (sortOption === "mm_not_ready") {
+      return items.sort((a, b) => {
+        if (a.matchmaking_ready !== b.matchmaking_ready) {
+          return Number(a.matchmaking_ready) - Number(b.matchmaking_ready);
+        }
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
+    }
+
+    if (sortOption === "newest") {
+      return items.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    }
+
+    if (sortOption === "oldest") {
+      return items.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    }
+
+    if (sortOption === "username_asc") {
+      return items.sort((a, b) => a.username.localeCompare(b.username));
+    }
+
+    return items.sort((a, b) => b.username.localeCompare(a.username));
+  }, [accounts, sortOption]);
+
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(sortedAccounts.length / ACCOUNTS_PER_PAGE)), [sortedAccounts.length]);
   const pageNumbers = useMemo(() => Array.from({ length: totalPages }, (_, index) => index + 1), [totalPages]);
   const paginatedAccounts = useMemo(() => {
     const start = (currentPage - 1) * ACCOUNTS_PER_PAGE;
-    return accounts.slice(start, start + ACCOUNTS_PER_PAGE);
-  }, [accounts, currentPage]);
+    return sortedAccounts.slice(start, start + ACCOUNTS_PER_PAGE);
+  }, [sortedAccounts, currentPage]);
   const ownAccounts = useMemo(
-    () => accounts.filter((account) => currentUserId !== null && account.owner_id === currentUserId),
-    [accounts, currentUserId],
+    () => sortedAccounts.filter((account) => currentUserId !== null && account.owner_id === currentUserId),
+    [sortedAccounts, currentUserId],
   );
   const ownPaginatedAccounts = useMemo(
     () => paginatedAccounts.filter((account) => currentUserId !== null && account.owner_id === currentUserId),
@@ -533,6 +572,14 @@ function App() {
     });
   };
 
+  const copyAccountField = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      setError("Copy failed. Please copy manually.");
+    }
+  };
+
   return (
     <div className="relative min-h-screen overflow-hidden bg-zinc-950 px-4 py-8 text-zinc-100">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(244,114,182,0.18),transparent_45%),radial-gradient(circle_at_15%_20%,rgba(99,102,241,0.25),transparent_42%)]" />
@@ -578,6 +625,15 @@ function App() {
                 <option value="VAC">VAC</option>
                 <option value="GameBanned">Game Banned</option>
                 <option value="VACLive">VAC Live</option>
+              </select>
+              <label className="text-sm text-zinc-300">Sort</label>
+              <select className="anime-input max-w-56" value={sortOption} onChange={(event) => setSortOption(event.target.value as SortOption)}>
+                <option value="mm_ready">MM Ready (default)</option>
+                <option value="mm_not_ready">MM Not Ready first</option>
+                <option value="newest">Newest first</option>
+                <option value="oldest">Oldest first</option>
+                <option value="username_asc">Username A-Z</option>
+                <option value="username_desc">Username Z-A</option>
               </select>
               <button className="anime-secondary-button px-4 py-2" onClick={() => loadAccounts()}>
                 Refresh
@@ -675,9 +731,36 @@ function App() {
                       <td className="px-4 py-3">
                         {account.avatar_url ? <img src={account.avatar_url} alt="Avatar" className="h-9 w-9 rounded-full border border-zinc-600" /> : <div className="h-9 w-9 rounded-full bg-zinc-700" />}
                       </td>
-                      <td className="px-4 py-3">{account.username}</td>
-                      <td className="px-4 py-3">{account.email}</td>
-                      <td className="px-4 py-3">{account.password}</td>
+                      <td className="px-4 py-3">
+                        <button
+                          type="button"
+                          className="cursor-copy text-left hover:text-fuchsia-200"
+                          title="Click to copy username"
+                          onClick={() => copyAccountField(account.username)}
+                        >
+                          {account.username}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          type="button"
+                          className="cursor-copy text-left hover:text-fuchsia-200"
+                          title="Click to copy email"
+                          onClick={() => copyAccountField(account.email)}
+                        >
+                          {account.email}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          type="button"
+                          className="group cursor-copy text-left"
+                          title="Hover to reveal, click to copy password"
+                          onClick={() => copyAccountField(account.password)}
+                        >
+                          <span className="inline-block blur-sm transition group-hover:blur-0">{account.password}</span>
+                        </button>
+                      </td>
                       <td className="px-4 py-3">{account.ban_type}</td>
                       <td className="px-4 py-3">{account.ban_type === "VACLive" ? account.vac_live_remaining ?? "Expired" : "-"}</td>
                       <td className="px-4 py-3">{account.matchmaking_ready ? "Yes" : "No"}</td>
@@ -715,6 +798,46 @@ function App() {
                   disabled={selectedOwnAccounts.length === 0}
                 >
                   Export Selected ({selectedOwnAccounts.length})
+                </button>
+              </div>
+            </div>
+
+            <div className="anime-panel flex items-center justify-between rounded-3xl p-4 text-sm">
+              <p className="text-zinc-300">
+                Page {currentPage} of {totalPages} · Showing up to {ACCOUNTS_PER_PAGE} accounts per page
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="anime-secondary-button px-3 py-2 disabled:opacity-50"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                >
+                  Previous
+                </button>
+                <div className="flex items-center gap-1">
+                  {pageNumbers.map((pageNumber) => (
+                    <button
+                      key={pageNumber}
+                      type="button"
+                      className={`rounded-lg border px-3 py-2 text-xs transition ${
+                        pageNumber === currentPage
+                          ? "border-fuchsia-300/60 bg-fuchsia-500/20 text-fuchsia-100"
+                          : "border-zinc-600/70 bg-zinc-800/60 text-zinc-200 hover:bg-zinc-700/70"
+                      }`}
+                      onClick={() => setCurrentPage(pageNumber)}
+                    >
+                      {pageNumber}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="anime-secondary-button px-3 py-2 disabled:opacity-50"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+                >
+                  Next
                 </button>
               </div>
             </div>
@@ -759,46 +882,6 @@ function App() {
               </label>
               <button className="anime-primary-button md:col-span-3">Save Account</button>
             </form>
-
-            <div className="anime-panel flex items-center justify-between rounded-3xl p-4 text-sm">
-              <p className="text-zinc-300">
-                Page {currentPage} of {totalPages} · Showing up to {ACCOUNTS_PER_PAGE} accounts per page
-              </p>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className="anime-secondary-button px-3 py-2 disabled:opacity-50"
-                  disabled={currentPage <= 1}
-                  onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
-                >
-                  Previous
-                </button>
-                <div className="flex items-center gap-1">
-                  {pageNumbers.map((pageNumber) => (
-                    <button
-                      key={pageNumber}
-                      type="button"
-                      className={`rounded-lg border px-3 py-2 text-xs transition ${
-                        pageNumber === currentPage
-                          ? "border-fuchsia-300/60 bg-fuchsia-500/20 text-fuchsia-100"
-                          : "border-zinc-600/70 bg-zinc-800/60 text-zinc-200 hover:bg-zinc-700/70"
-                      }`}
-                      onClick={() => setCurrentPage(pageNumber)}
-                    >
-                      {pageNumber}
-                    </button>
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  className="anime-secondary-button px-3 py-2 disabled:opacity-50"
-                  disabled={currentPage >= totalPages}
-                  onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
-                >
-                  Next
-                </button>
-              </div>
-            </div>
 
             <form onSubmit={handleCreateApiKey} className="anime-panel rounded-3xl p-4">
               <p className="mb-3 text-sm text-zinc-300">Create an API key for script-based account imports (Stace-style automation).</p>
