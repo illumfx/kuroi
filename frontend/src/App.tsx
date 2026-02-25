@@ -583,43 +583,6 @@ function App() {
               </button>
             </div>
 
-            <form onSubmit={handleCreateAccount} className="anime-panel grid gap-3 rounded-3xl p-4 md:grid-cols-3">
-              <input className="anime-input" placeholder="Username" value={newAccount.username} onChange={(event) => setNewAccount({ ...newAccount, username: event.target.value })} />
-              <input className="anime-input" placeholder="Email" value={newAccount.email} onChange={(event) => setNewAccount({ ...newAccount, email: event.target.value })} />
-              <input type="password" className="anime-input" placeholder="Password" value={newAccount.password} onChange={(event) => setNewAccount({ ...newAccount, password: event.target.value })} />
-
-              <select className="anime-input" value={newAccount.ban_type} onChange={(event) => setNewAccount({ ...newAccount, ban_type: event.target.value as BanType })}>
-                <option value="None">Not banned</option>
-                <option value="VAC">VAC</option>
-                <option value="GameBanned">Game Banned</option>
-                <option value="VACLive">VAC Live</option>
-              </select>
-
-              {newAccount.ban_type === "VACLive" && (
-                <>
-                  <input
-                    className="anime-input"
-                    type="number"
-                    min={1}
-                    max={365}
-                    placeholder="Duration"
-                    value={newAccount.vac_live_value}
-                    onChange={(event) => setNewAccount({ ...newAccount, vac_live_value: event.target.value })}
-                  />
-                  <select className="anime-input" value={newAccount.vac_live_unit} onChange={(event) => setNewAccount({ ...newAccount, vac_live_unit: event.target.value as "hours" | "days" })}>
-                    <option value="hours">Hours</option>
-                    <option value="days">Days</option>
-                  </select>
-                </>
-              )}
-
-              <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-sm text-zinc-100">
-                <input type="checkbox" checked={newAccount.is_public} onChange={(event) => setNewAccount({ ...newAccount, is_public: event.target.checked })} />
-                Public visibility
-              </label>
-              <button className="anime-primary-button md:col-span-3">Save Account</button>
-            </form>
-
             {editingAccountId && (
               <form onSubmit={handleUpdateAccount} className="anime-panel grid gap-3 rounded-3xl p-4 md:grid-cols-3">
                 <input className="anime-input" placeholder="Username" value={editAccount.username} onChange={(event) => setEditAccount({ ...editAccount, username: event.target.value })} />
@@ -741,6 +704,43 @@ function App() {
                 </button>
               </div>
             </div>
+
+            <form onSubmit={handleCreateAccount} className="anime-panel grid gap-3 rounded-3xl p-4 md:grid-cols-3">
+              <input className="anime-input" placeholder="Username" value={newAccount.username} onChange={(event) => setNewAccount({ ...newAccount, username: event.target.value })} />
+              <input className="anime-input" placeholder="Email" value={newAccount.email} onChange={(event) => setNewAccount({ ...newAccount, email: event.target.value })} />
+              <input type="password" className="anime-input" placeholder="Password" value={newAccount.password} onChange={(event) => setNewAccount({ ...newAccount, password: event.target.value })} />
+
+              <select className="anime-input" value={newAccount.ban_type} onChange={(event) => setNewAccount({ ...newAccount, ban_type: event.target.value as BanType })}>
+                <option value="None">Not banned</option>
+                <option value="VAC">VAC</option>
+                <option value="GameBanned">Game Banned</option>
+                <option value="VACLive">VAC Live</option>
+              </select>
+
+              {newAccount.ban_type === "VACLive" && (
+                <>
+                  <input
+                    className="anime-input"
+                    type="number"
+                    min={1}
+                    max={365}
+                    placeholder="Duration"
+                    value={newAccount.vac_live_value}
+                    onChange={(event) => setNewAccount({ ...newAccount, vac_live_value: event.target.value })}
+                  />
+                  <select className="anime-input" value={newAccount.vac_live_unit} onChange={(event) => setNewAccount({ ...newAccount, vac_live_unit: event.target.value as "hours" | "days" })}>
+                    <option value="hours">Hours</option>
+                    <option value="days">Days</option>
+                  </select>
+                </>
+              )}
+
+              <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-sm text-zinc-100">
+                <input type="checkbox" checked={newAccount.is_public} onChange={(event) => setNewAccount({ ...newAccount, is_public: event.target.checked })} />
+                Public visibility
+              </label>
+              <button className="anime-primary-button md:col-span-3">Save Account</button>
+            </form>
 
             <div className="anime-panel flex items-center justify-between rounded-3xl p-4 text-sm">
               <p className="text-zinc-300">
