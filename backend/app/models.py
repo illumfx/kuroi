@@ -72,6 +72,7 @@ class SteamAccount(Base):
     username: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     password: Mapped[str] = mapped_column(Text)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    matchmaking_ready: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     is_public: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     ban_status: Mapped[BanStatus] = mapped_column(SQLEnum(BanStatus), default=BanStatus.CLEAN, index=True)
     ban_type: Mapped[str] = mapped_column(String(16), default=BanType.NONE.value, index=True)

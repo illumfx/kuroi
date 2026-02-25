@@ -11,6 +11,7 @@ type Account = {
   email: string;
   ban_type: BanType;
   vac_live_remaining?: string | null;
+  matchmaking_ready: boolean;
   is_public: boolean;
   avatar_url?: string | null;
   created_at: string;
@@ -96,6 +97,7 @@ function App() {
     ban_type: "None" as BanType,
     vac_live_value: "24",
     vac_live_unit: "hours" as "hours" | "days",
+    matchmaking_ready: false,
     is_public: false,
   });
 
@@ -106,6 +108,7 @@ function App() {
     ban_type: "None" as BanType,
     vac_live_value: "24",
     vac_live_unit: "hours" as "hours" | "days",
+    matchmaking_ready: false,
     is_public: false,
   });
 
@@ -287,6 +290,7 @@ function App() {
         password: newAccount.password,
         email: newAccount.email,
         ban_type: newAccount.ban_type,
+        matchmaking_ready: newAccount.matchmaking_ready,
         is_public: newAccount.is_public,
       };
 
@@ -307,6 +311,7 @@ function App() {
         ban_type: "None",
         vac_live_value: "24",
         vac_live_unit: "hours",
+        matchmaking_ready: false,
         is_public: false,
       });
       await loadAccounts();
@@ -380,6 +385,7 @@ function App() {
       ban_type: account.ban_type,
       vac_live_value: "24",
       vac_live_unit: "hours",
+      matchmaking_ready: account.matchmaking_ready,
       is_public: account.is_public,
     });
   };
@@ -397,6 +403,7 @@ function App() {
         password: editAccount.password,
         email: editAccount.email,
         ban_type: editAccount.ban_type,
+        matchmaking_ready: editAccount.matchmaking_ready,
         is_public: editAccount.is_public,
       };
       if (editAccount.ban_type === "VACLive") {
@@ -461,7 +468,7 @@ function App() {
       return;
     }
 
-    const header = ["id", "username", "email", "password", "ban_type", "vac_live_remaining", "is_public", "created_at"];
+    const header = ["id", "username", "email", "password", "ban_type", "vac_live_remaining", "matchmaking_ready", "is_public", "created_at"];
     const csvLines = [
       header.join(","),
       ...rows.map((account) =>
@@ -472,6 +479,7 @@ function App() {
           account.password,
           account.ban_type,
           account.vac_live_remaining ?? "",
+          account.matchmaking_ready,
           account.is_public,
           account.created_at,
         ]
@@ -611,6 +619,10 @@ function App() {
                   </>
                 )}
                 <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-sm text-zinc-100">
+                  <input type="checkbox" checked={editAccount.matchmaking_ready} onChange={(event) => setEditAccount({ ...editAccount, matchmaking_ready: event.target.checked })} />
+                  Matchmaking ready (Level 2)
+                </label>
+                <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-sm text-zinc-100">
                   <input type="checkbox" checked={editAccount.is_public} onChange={(event) => setEditAccount({ ...editAccount, is_public: event.target.checked })} />
                   Public visibility
                 </label>
@@ -641,6 +653,7 @@ function App() {
                     <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">Password</th>
                     <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">Ban Type</th>
                     <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">VAC Live Left</th>
+                    <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">MM Ready</th>
                     <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">Visibility</th>
                     <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">Actions</th>
                   </tr>
@@ -667,6 +680,7 @@ function App() {
                       <td className="px-4 py-3">{account.password}</td>
                       <td className="px-4 py-3">{account.ban_type}</td>
                       <td className="px-4 py-3">{account.ban_type === "VACLive" ? account.vac_live_remaining ?? "Expired" : "-"}</td>
+                      <td className="px-4 py-3">{account.matchmaking_ready ? "Yes" : "No"}</td>
                       <td className="px-4 py-3">{account.is_public ? "Public" : "Private"}</td>
                       <td className="px-4 py-3">
                         {currentUserId === account.owner_id ? (
@@ -735,6 +749,10 @@ function App() {
                 </>
               )}
 
+              <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-sm text-zinc-100">
+                <input type="checkbox" checked={newAccount.matchmaking_ready} onChange={(event) => setNewAccount({ ...newAccount, matchmaking_ready: event.target.checked })} />
+                Matchmaking ready (Level 2)
+              </label>
               <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-sm text-zinc-100">
                 <input type="checkbox" checked={newAccount.is_public} onChange={(event) => setNewAccount({ ...newAccount, is_public: event.target.checked })} />
                 Public visibility

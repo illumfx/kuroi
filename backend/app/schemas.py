@@ -63,6 +63,7 @@ class SteamAccountCreate(BaseModel):
     ban_type: BanType = BanType.NONE
     vac_live_value: int | None = Field(default=None, ge=1, le=365)
     vac_live_unit: Literal["hours", "days"] | None = None
+    matchmaking_ready: bool = False
     is_public: bool = False
 
     @model_validator(mode="after")
@@ -83,6 +84,7 @@ class SteamAccountUpdate(BaseModel):
     ban_type: BanType = BanType.NONE
     vac_live_value: int | None = Field(default=None, ge=1, le=365)
     vac_live_unit: Literal["hours", "days"] | None = None
+    matchmaking_ready: bool = False
     is_public: bool = False
 
     @model_validator(mode="after")
@@ -107,6 +109,7 @@ class SteamAccountOut(BaseModel):
     ban_type: BanType
     vac_live_expires_at: datetime | None = None
     vac_live_remaining: str | None = None
+    matchmaking_ready: bool
     is_public: bool
     avatar_url: str | None = None
     created_at: datetime

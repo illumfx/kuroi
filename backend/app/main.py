@@ -112,6 +112,9 @@ def ensure_schema_extensions() -> None:
             connection.exec_driver_sql("ALTER TABLE steam_accounts ADD COLUMN ban_type VARCHAR(16) DEFAULT 'None'")
         if "vac_live_expires_at" not in column_names:
             connection.exec_driver_sql("ALTER TABLE steam_accounts ADD COLUMN vac_live_expires_at TIMESTAMP")
+        if "matchmaking_ready" not in column_names:
+            connection.exec_driver_sql("ALTER TABLE steam_accounts ADD COLUMN matchmaking_ready BOOLEAN DEFAULT FALSE")
+        connection.exec_driver_sql("UPDATE steam_accounts SET matchmaking_ready = FALSE WHERE matchmaking_ready IS NULL")
 
 
 def ensure_account_unique_constraints() -> None:
@@ -303,6 +306,7 @@ def serialize_account(account: SteamAccount) -> SteamAccountOut:
         "ban_type": BanType(account.ban_type) if account.ban_type in BanType._value2member_map_ else BanType.VAC,
         "vac_live_expires_at": account.vac_live_expires_at,
         "vac_live_remaining": format_remaining_time(account.vac_live_expires_at),
+        "matchmaking_ready": account.matchmaking_ready,
         "is_public": account.is_public,
         "avatar_url": account.avatar_url,
         "created_at": account.created_at,
@@ -316,6 +320,7 @@ def create_account_record(
     username: str,
     email: str,
     password: str,
+    matchmaking_ready: bool,
     is_public: bool,
     ban_type: BanType = BanType.NONE,
     vac_live_value: int | None = None,
@@ -338,6 +343,7 @@ def create_account_record(
         username=username,
         password=encrypt_account_password(password, settings.app_secret),
         email=email,
+        matchmaking_ready=matchmaking_ready,
         is_public=is_public,
         ban_status=ban_status,
         ban_type=ban_type.value,
@@ -677,6 +683,7 @@ async def create_account(
         username=payload.username,
         email=payload.email,
         password=payload.password,
+        matchmaking_ready=payload.matchmaking_ready,
         is_public=payload.is_public,
         ban_type=payload.ban_type,
         vac_live_value=payload.vac_live_value,
@@ -750,6 +757,7 @@ def mass_import_accounts(
                 username=username,
                 email=email,
                 password=password,
+                matchmaking_ready=False,
                 is_public=payload.is_public,
                 ban_type=BanType.NONE,
             )
@@ -807,6 +815,7 @@ def update_account(
     account.username = payload.username
     account.password = encrypt_account_password(payload.password, settings.app_secret)
     account.email = payload.email
+    account.matchmaking_ready = payload.matchmaking_ready
     account.is_public = payload.is_public
     account.ban_type = payload.ban_type.value
 
