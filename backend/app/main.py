@@ -6,13 +6,16 @@ import secrets
 import time
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from jose import JWTError, jwt
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import inspect
@@ -682,3 +685,46 @@ def delete_account(
 
     db.delete(account)
     db.commit()
+
+
+def register_frontend_routes() -> None:
+    frontend_dist_dir = Path(__file__).resolve().parent.parent / "frontend-dist"
+    if not frontend_dist_dir.exists():
+        return
+
+    assets_dir = frontend_dist_dir / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="frontend-assets")
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    def frontend_favicon():
+        favicon_path = frontend_dist_dir / "favicon.ico"
+        if favicon_path.exists():
+            return FileResponse(str(favicon_path))
+        raise HTTPException(status_code=404, detail="Favicon not found")
+
+    @app.get("/", include_in_schema=False)
+    def frontend_index_root():
+        return FileResponse(str(frontend_dist_dir / "index.html"))
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def frontend_spa_fallback(full_path: str):
+        protected_prefixes = {
+            "auth",
+            "accounts",
+            "health",
+            "docs",
+            "redoc",
+            "openapi.json",
+        }
+        first_segment = full_path.split("/", 1)[0]
+        if first_segment in protected_prefixes:
+            raise HTTPException(status_code=404, detail="Not found")
+
+        requested_file = frontend_dist_dir / full_path
+        if full_path and requested_file.exists() and requested_file.is_file():
+            return FileResponse(str(requested_file))
+        return FileResponse(str(frontend_dist_dir / "index.html"))
+
+
+register_frontend_routes()

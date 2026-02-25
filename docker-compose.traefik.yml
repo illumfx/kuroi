@@ -1,18 +1,5 @@
 services:
-  backend:
-    ports: []
-    networks:
-      - default
-      - traefik
-    labels:
-      - traefik.enable=true
-      - traefik.docker.network=${TRAEFIK_NETWORK:?TRAEFIK_NETWORK is required}
-      - traefik.http.routers.kuroi-api.rule=Host(`${TRAEFIK_API_DOMAIN:?TRAEFIK_API_DOMAIN is required}`)
-      - traefik.http.routers.kuroi-api.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
-      - traefik.http.routers.kuroi-api.tls=${TRAEFIK_TLS:-true}
-      - traefik.http.services.kuroi-api.loadbalancer.server.port=8000
-
-  frontend:
+  app:
     ports: []
     networks:
       - default
@@ -23,7 +10,7 @@ services:
       - traefik.http.routers.kuroi.rule=Host(`${TRAEFIK_DOMAIN:?TRAEFIK_DOMAIN is required}`)
       - traefik.http.routers.kuroi.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
       - traefik.http.routers.kuroi.tls=${TRAEFIK_TLS:-true}
-      - traefik.http.services.kuroi.loadbalancer.server.port=80
+      - traefik.http.services.kuroi.loadbalancer.server.port=8000
 
 networks:
   traefik:

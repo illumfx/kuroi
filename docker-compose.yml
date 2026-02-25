@@ -3,6 +3,7 @@ name: kuroi
 services:
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: kuroi
       POSTGRES_USER: kuroi
@@ -15,11 +16,11 @@ services:
       timeout: 5s
       retries: 5
 
-  backend:
-    build:
-      context: ./backend
+  app:
+    image: ghcr.io/illumfx/kuroi-app:${IMAGE_TAG:-latest}
+    restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "3000:8000"
     environment:
       DATABASE_URL: postgresql+psycopg2://kuroi:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/kuroi
       APP_SECRET: ${APP_SECRET:?APP_SECRET is required}
@@ -28,24 +29,13 @@ services:
       OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
-      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-http://localhost:8000/auth/oidc/callback}
+      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-http://localhost:3000/auth/oidc/callback}
       OIDC_TOKEN_AUTH_METHOD: ${OIDC_TOKEN_AUTH_METHOD:-auto}
       OIDC_USE_PKCE: ${OIDC_USE_PKCE:-true}
       STEAM_API_KEY: ${STEAM_API_KEY:-}
     depends_on:
       db:
         condition: service_healthy
-
-  frontend:
-    build:
-      context: ./frontend
-      args:
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
-        VITE_OIDC_ENABLED: ${OIDC_ENABLED:-true}
-    ports:
-      - "3000:80"
-    depends_on:
-      - backend
 
 volumes:
   postgres_data:
