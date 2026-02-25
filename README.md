@@ -1,6 +1,13 @@
-# kuroi
+<div style="text-align: center;">
+<h3>kuroi</h3>
+
+![Kuroi Logo](./frontend/src/assets/kuroi-logo.svg)
 
 `kuroi` is a Steam account management app with OIDC authentication, API-key automation, account visibility controls, and ban-state tracking.
+
+</div>
+
+---
 
 ## Production model (simplified)
 

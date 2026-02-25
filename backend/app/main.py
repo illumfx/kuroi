@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import re
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
@@ -31,6 +32,9 @@ from .schemas import (
     InviteCreateRequest,
     InviteOut,
     LocalLoginRequest,
+    MassImportError,
+    MassImportRequest,
+    MassImportResponse,
     RegisterRequest,
     SteamAccountCreate,
     SteamAccountOut,
@@ -287,6 +291,42 @@ def serialize_account(account: SteamAccount) -> SteamAccountOut:
         "created_at": account.created_at,
     }
     return SteamAccountOut.model_validate(payload)
+
+
+def create_account_record(
+    *,
+    actor_id: int,
+    username: str,
+    email: str,
+    password: str,
+    is_public: bool,
+    ban_type: BanType = BanType.NONE,
+    vac_live_value: int | None = None,
+    vac_live_unit: str | None = None,
+) -> SteamAccount:
+    generated_steam_id = f"local_{secrets.token_hex(10)}"
+    ban_status = BanStatus.CLEAN
+    vac_live_expires_at = None
+    if ban_type in {BanType.VAC, BanType.GAME_BANNED}:
+        ban_status = BanStatus.BAN
+    elif ban_type == BanType.VAC_LIVE:
+        ban_status = BanStatus.VAC_LIVE
+        amount = vac_live_value or 0
+        delta = timedelta(hours=amount) if vac_live_unit == "hours" else timedelta(days=amount)
+        vac_live_expires_at = datetime.now(timezone.utc) + delta
+
+    return SteamAccount(
+        owner_id=actor_id,
+        steam_id64=generated_steam_id,
+        username=username,
+        password=encrypt_account_password(password, settings.app_secret),
+        email=email,
+        is_public=is_public,
+        ban_status=ban_status,
+        ban_type=ban_type.value,
+        vac_live_expires_at=vac_live_expires_at,
+        avatar_url=None,
+    )
 
 
 @app.get("/health")
@@ -553,6 +593,12 @@ def create_invite(payload: InviteCreateRequest, user: User = Depends(get_current
 
 @app.post("/auth/api-keys", response_model=APIKeyCreateResponse)
 def create_api_key(payload: APIKeyCreateRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    existing_active_keys = db.scalars(
+        select(APIKey).where(APIKey.user_id == user.id, APIKey.revoked_at.is_(None))
+    ).all()
+    for existing_key in existing_active_keys:
+        db.delete(existing_key)
+
     plain_key = generate_api_key()
     entry = APIKey(
         user_id=user.id,
@@ -584,35 +630,67 @@ async def create_account(
     actor: User = Depends(resolve_actor),
     db: Session = Depends(get_db),
 ):
-    generated_steam_id = f"local_{secrets.token_hex(10)}"
-    ban_status = BanStatus.CLEAN
-    vac_live_expires_at = None
-    if payload.ban_type in {BanType.VAC, BanType.GAME_BANNED}:
-        ban_status = BanStatus.BAN
-    elif payload.ban_type == BanType.VAC_LIVE:
-        ban_status = BanStatus.VAC_LIVE
-        amount = payload.vac_live_value or 0
-        delta = timedelta(hours=amount) if payload.vac_live_unit == "hours" else timedelta(days=amount)
-        vac_live_expires_at = datetime.now(timezone.utc) + delta
-
-    avatar_url = None
-
-    account = SteamAccount(
-        owner_id=actor.id,
-        steam_id64=generated_steam_id,
+    account = create_account_record(
+        actor_id=actor.id,
         username=payload.username,
-        password=encrypt_account_password(payload.password, settings.app_secret),
         email=payload.email,
+        password=payload.password,
         is_public=payload.is_public,
-        ban_status=ban_status,
-        ban_type=payload.ban_type.value,
-        vac_live_expires_at=vac_live_expires_at,
-        avatar_url=avatar_url,
+        ban_type=payload.ban_type,
+        vac_live_value=payload.vac_live_value,
+        vac_live_unit=payload.vac_live_unit,
     )
     db.add(account)
     db.commit()
     db.refresh(account)
     return serialize_account(account)
+
+
+@app.post("/accounts/mass-import", response_model=MassImportResponse)
+def mass_import_accounts(
+    payload: MassImportRequest,
+    actor: User = Depends(resolve_actor),
+    db: Session = Depends(get_db),
+):
+    errors: list[MassImportError] = []
+    created = 0
+
+    for line_number, raw_line in enumerate(payload.content.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        candidate = line.split(":", 1)[1].strip() if ":" in line else line
+        parts = [part.strip() for part in candidate.split("|")]
+        if len(parts) != 3:
+            errors.append(MassImportError(line=line_number, message="Invalid format, expected: email | username | password", raw=raw_line))
+            continue
+
+        email, username, password = parts
+        if not email or not username or not password:
+            errors.append(MassImportError(line=line_number, message="Email, username and password are required", raw=raw_line))
+            continue
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            errors.append(MassImportError(line=line_number, message="Invalid email format", raw=raw_line))
+            continue
+
+        try:
+            account = create_account_record(
+                actor_id=actor.id,
+                username=username,
+                email=email,
+                password=password,
+                is_public=payload.is_public,
+                ban_type=BanType.NONE,
+            )
+            db.add(account)
+            db.commit()
+            created += 1
+        except Exception as exc:
+            db.rollback()
+            errors.append(MassImportError(line=line_number, message=f"Could not create account: {exc}", raw=raw_line))
+
+    return MassImportResponse(created=created, failed=len(errors), errors=errors)
 
 
 @app.get("/accounts", response_model=list[SteamAccountOut])

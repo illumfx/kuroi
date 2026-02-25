@@ -35,6 +35,18 @@ type ApiKeyResponse = {
   created_at: string;
 };
 
+type MassImportError = {
+  line: number;
+  message: string;
+  raw: string;
+};
+
+type MassImportResponse = {
+  created: number;
+  failed: number;
+  errors: MassImportError[];
+};
+
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 const oidcEnabledFromEnv = (import.meta.env.VITE_OIDC_ENABLED ?? "false") === "true";
 
@@ -69,6 +81,10 @@ function App() {
 
   const [generatedApiKey, setGeneratedApiKey] = useState("");
   const [editingAccountId, setEditingAccountId] = useState<number | null>(null);
+  const [massImportContent, setMassImportContent] = useState("");
+  const [massImportPublic, setMassImportPublic] = useState(false);
+  const [massImportResult, setMassImportResult] = useState<MassImportResponse | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
 
   const [newAccount, setNewAccount] = useState({
     username: "",
@@ -255,6 +271,13 @@ function App() {
     event.preventDefault();
     setError("");
 
+    const confirmed = window.confirm(
+      "Generating a new API key will invalidate and delete your previous key. Continue?",
+    );
+    if (!confirmed) {
+      return;
+    }
+
     try {
       const response = await apiFetch<ApiKeyResponse>("/auth/api-keys", token, {
         method: "POST",
@@ -263,6 +286,30 @@ function App() {
       setGeneratedApiKey(response.api_key);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unexpected API key error");
+    }
+  };
+
+  const handleMassImport = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!massImportContent.trim()) {
+      return;
+    }
+
+    setError("");
+    setMassImportResult(null);
+    setIsImporting(true);
+    try {
+      const response = await apiFetch<MassImportResponse>("/accounts/mass-import", token, {
+        method: "POST",
+        body: JSON.stringify({ content: massImportContent, is_public: massImportPublic }),
+      });
+      setMassImportResult(response);
+      setMassImportContent("");
+      await loadAccounts();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unexpected mass import error");
+    } finally {
+      setIsImporting(false);
     }
   };
 
@@ -472,6 +519,41 @@ function App() {
     "is_public": false
   }'`}
                   </pre>
+                </div>
+              )}
+            </form>
+
+            <form onSubmit={handleMassImport} className="anime-panel rounded-3xl p-4 space-y-3">
+              <p className="text-sm text-zinc-300">Mass import format: <span className="font-mono">timestamp: email | username | password</span></p>
+              <textarea
+                className="anime-input min-h-40 w-full"
+                placeholder="2025-01-01 10:00:00: mail@example.com | account_name | secret_password"
+                value={massImportContent}
+                onChange={(event) => setMassImportContent(event.target.value)}
+              />
+              <label className="anime-input flex items-center gap-2 px-3 py-2">
+                <input type="checkbox" checked={massImportPublic} onChange={(event) => setMassImportPublic(event.target.checked)} />
+                Imported accounts are public
+              </label>
+              <button className="anime-primary-button" disabled={isImporting || !massImportContent.trim()}>
+                {isImporting ? "Importing..." : "Run Mass Import"}
+              </button>
+
+              {massImportResult && (
+                <div className="space-y-2 rounded-xl border border-zinc-700/60 bg-zinc-900/40 p-3 text-sm">
+                  <p>
+                    Created: <span className="font-semibold text-emerald-300">{massImportResult.created}</span> · Failed:{" "}
+                    <span className="font-semibold text-rose-300">{massImportResult.failed}</span>
+                  </p>
+                  {massImportResult.errors.length > 0 && (
+                    <ul className="max-h-40 overflow-auto space-y-1 rounded-lg border border-rose-300/30 bg-rose-500/10 p-2 text-xs text-rose-200">
+                      {massImportResult.errors.map((importError, index) => (
+                        <li key={`${importError.line}-${index}`}>
+                          Line {importError.line}: {importError.message}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               )}
             </form>

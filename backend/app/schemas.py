@@ -113,3 +113,20 @@ class SteamAccountOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class MassImportRequest(BaseModel):
+    content: str = Field(min_length=1)
+    is_public: bool = False
+
+
+class MassImportError(BaseModel):
+    line: int
+    message: str
+    raw: str
+
+
+class MassImportResponse(BaseModel):
+    created: int
+    failed: int
+    errors: list[MassImportError]
