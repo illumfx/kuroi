@@ -835,13 +835,15 @@ function App() {
                 value={massImportContent}
                 onChange={(event) => setMassImportContent(event.target.value)}
               />
-              <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-sm text-zinc-100">
-                <input type="checkbox" checked={massImportPublic} onChange={(event) => setMassImportPublic(event.target.checked)} />
-                Imported accounts are public
-              </label>
-              <button className="anime-primary-button" disabled={isImporting || !massImportContent.trim()}>
-                {isImporting ? "Importing..." : "Run Mass Import"}
-              </button>
+              <div className="grid gap-3 md:grid-cols-[1fr_auto]">
+                <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-sm text-zinc-100">
+                  <input type="checkbox" checked={massImportPublic} onChange={(event) => setMassImportPublic(event.target.checked)} />
+                  Imported accounts are public
+                </label>
+                <button className="anime-primary-button px-4" disabled={isImporting || !massImportContent.trim()}>
+                  {isImporting ? "Importing..." : "Run Mass Import"}
+                </button>
+              </div>
 
               {massImportResult && (
                 <div className="space-y-2 rounded-xl border border-zinc-700/60 bg-zinc-900/40 p-3 text-sm">
