@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import re
@@ -23,7 +24,7 @@ from sqlalchemy import inspect
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from .database import Base, engine, get_db
+from .database import Base, SessionLocal, engine, get_db
 from .models import APIKey, InviteCode, SteamAccount, User
 from .models import BanStatus, BanType
 from .schemas import (
@@ -72,6 +73,7 @@ class Settings(BaseSettings):
     oidc_use_pkce: bool = True
 
     steam_api_key: str | None = None
+    steam_status_refresh_seconds: int = 300
 
 
 @lru_cache
@@ -85,6 +87,7 @@ settings = get_settings()
 
 OIDC_STATE_TTL_SECONDS = 600
 oidc_state_store: dict[str, dict[str, str | float]] = {}
+steam_sync_task: asyncio.Task[None] | None = None
 
 
 def validate_runtime_config() -> None:
@@ -114,6 +117,10 @@ def ensure_schema_extensions() -> None:
             connection.exec_driver_sql("ALTER TABLE steam_accounts ADD COLUMN vac_live_expires_at TIMESTAMP")
         if "matchmaking_ready" not in column_names:
             connection.exec_driver_sql("ALTER TABLE steam_accounts ADD COLUMN matchmaking_ready BOOLEAN DEFAULT FALSE")
+        if "online_status" not in column_names:
+            connection.exec_driver_sql("ALTER TABLE steam_accounts ADD COLUMN online_status VARCHAR(32)")
+        if "game_status" not in column_names:
+            connection.exec_driver_sql("ALTER TABLE steam_accounts ADD COLUMN game_status VARCHAR(255)")
         connection.exec_driver_sql("UPDATE steam_accounts SET matchmaking_ready = FALSE WHERE matchmaking_ready IS NULL")
 
 
@@ -309,9 +316,129 @@ def serialize_account(account: SteamAccount) -> SteamAccountOut:
         "matchmaking_ready": account.matchmaking_ready,
         "is_public": account.is_public,
         "avatar_url": account.avatar_url,
+        "online_status": account.online_status,
+        "game_status": account.game_status,
         "created_at": account.created_at,
     }
     return SteamAccountOut.model_validate(payload)
+
+
+PERSONA_STATE_LABELS = {
+    0: "Offline",
+    1: "Online",
+    2: "Busy",
+    3: "Away",
+    4: "Snooze",
+    5: "LookingToTrade",
+    6: "LookingToPlay",
+}
+
+
+def _resolve_steam_presence(player: dict[str, Any]) -> tuple[str, str | None]:
+    game_name = player.get("gameextrainfo")
+    if game_name:
+        return "InGame", str(game_name)
+
+    raw_state = player.get("personastate", 0)
+    try:
+        persona_state = int(raw_state)
+    except (TypeError, ValueError):
+        persona_state = 0
+    return PERSONA_STATE_LABELS.get(persona_state, "Offline"), None
+
+
+def _chunked(values: list[str], size: int) -> list[list[str]]:
+    return [values[index : index + size] for index in range(0, len(values), size)]
+
+
+async def refresh_matchmaking_accounts_steam_presence() -> None:
+    if not settings.steam_api_key:
+        return
+
+    db = SessionLocal()
+    try:
+        candidates = db.scalars(select(SteamAccount).where(SteamAccount.matchmaking_ready.is_(True))).all()
+        if not candidates:
+            return
+
+        steamid_to_account: dict[str, SteamAccount] = {}
+        for account in candidates:
+            steam_id = (account.steam_id64 or "").strip()
+            if steam_id.isdigit():
+                steamid_to_account[steam_id] = account
+
+        if not steamid_to_account:
+            return
+
+        ids = list(steamid_to_account.keys())
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            for id_chunk in _chunked(ids, 100):
+                url = (
+                    "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/"
+                    f"?key={settings.steam_api_key}&steamids={','.join(id_chunk)}"
+                )
+                response = await client.get(url)
+                response.raise_for_status()
+                players = response.json().get("response", {}).get("players", [])
+
+                seen_ids: set[str] = set()
+                for player in players:
+                    steam_id = str(player.get("steamid", "")).strip()
+                    if not steam_id:
+                        continue
+                    seen_ids.add(steam_id)
+                    account = steamid_to_account.get(steam_id)
+                    if not account:
+                        continue
+
+                    avatar_url = player.get("avatarfull")
+                    if avatar_url:
+                        account.avatar_url = str(avatar_url)
+                    account.online_status, account.game_status = _resolve_steam_presence(player)
+
+                missing_ids = set(id_chunk) - seen_ids
+                for missing_id in missing_ids:
+                    account = steamid_to_account.get(missing_id)
+                    if not account:
+                        continue
+                    account.online_status = "Unknown"
+                    account.game_status = None
+
+        db.commit()
+    finally:
+        db.close()
+
+
+async def steam_sync_loop() -> None:
+    refresh_seconds = max(settings.steam_status_refresh_seconds, 60)
+    while True:
+        try:
+            await refresh_matchmaking_accounts_steam_presence()
+        except Exception:
+            pass
+        await asyncio.sleep(refresh_seconds)
+
+
+@app.on_event("startup")
+async def startup_steam_sync() -> None:
+    global steam_sync_task
+    if not settings.steam_api_key:
+        return
+    if steam_sync_task is None or steam_sync_task.done():
+        steam_sync_task = asyncio.create_task(steam_sync_loop())
+
+
+@app.on_event("shutdown")
+async def shutdown_steam_sync() -> None:
+    global steam_sync_task
+    if not steam_sync_task:
+        return
+    steam_sync_task.cancel()
+    try:
+        await steam_sync_task
+    except asyncio.CancelledError:
+        pass
+    steam_sync_task = None
 
 
 def create_account_record(
@@ -353,6 +480,8 @@ def create_account_record(
         ban_type=ban_type.value,
         vac_live_expires_at=vac_live_expires_at,
         avatar_url=None,
+        online_status=None,
+        game_status=None,
     )
 
 

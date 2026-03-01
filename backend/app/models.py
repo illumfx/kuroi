@@ -78,6 +78,8 @@ class SteamAccount(Base):
     ban_type: Mapped[str] = mapped_column(String(16), default=BanType.NONE.value, index=True)
     vac_live_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    online_status: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    game_status: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

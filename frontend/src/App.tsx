@@ -10,6 +10,8 @@ type Account = {
   password: string;
   email: string;
   steam_id64?: string | null;
+  online_status?: string | null;
+  game_status?: string | null;
   ban_type: BanType;
   vac_live_remaining?: string | null;
   matchmaking_ready: boolean;
@@ -679,6 +681,33 @@ function App() {
     }
   };
 
+  const getAvatarBorderClass = (account: Account) => {
+    if (account.ban_type !== "None") {
+      return "border-rose-500/90 shadow-[0_0_0_1px_rgba(244,63,94,0.35)]";
+    }
+
+    if (account.online_status === "InGame") {
+      return "border-emerald-400/90 shadow-[0_0_0_1px_rgba(52,211,153,0.35)]";
+    }
+
+    const onlineStates = new Set(["Online", "Busy", "Away", "Snooze", "LookingToTrade", "LookingToPlay"]);
+    if (onlineStates.has(account.online_status ?? "")) {
+      return "border-sky-400/90 shadow-[0_0_0_1px_rgba(56,189,248,0.35)]";
+    }
+
+    return "border-zinc-600";
+  };
+
+  const getDisplayStatus = (account: Account) => {
+    if (account.ban_type !== "None") {
+      return "Banned";
+    }
+    if (account.online_status === "InGame") {
+      return account.game_status ? `In-Game: ${account.game_status}` : "In-Game";
+    }
+    return account.online_status ?? "Unknown";
+  };
+
   return (
     <div className="relative min-h-screen overflow-hidden bg-zinc-950 px-4 py-8 text-zinc-100">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(244,114,182,0.18),transparent_45%),radial-gradient(circle_at_15%_20%,rgba(99,102,241,0.25),transparent_42%)]" />
@@ -816,6 +845,7 @@ function App() {
                     <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">Steam ID64</th>
                     <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">Password</th>
                     <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">Ban Type</th>
+                    <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">Status</th>
                     <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">VAC Live Left</th>
                     <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">MM Ready</th>
                     <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">Visibility</th>
@@ -837,7 +867,11 @@ function App() {
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        {account.avatar_url ? <img src={account.avatar_url} alt="Avatar" className="h-9 w-9 rounded-full border border-zinc-600" /> : <div className="h-9 w-9 rounded-full bg-zinc-700" />}
+                        {account.avatar_url ? (
+                          <img src={account.avatar_url} alt="Avatar" className={`h-9 w-9 rounded-full border ${getAvatarBorderClass(account)}`} />
+                        ) : (
+                          <div className={`h-9 w-9 rounded-full border ${getAvatarBorderClass(account)} bg-zinc-700`} />
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <button
@@ -880,6 +914,7 @@ function App() {
                         </button>
                       </td>
                       <td className="px-4 py-3">{account.ban_type}</td>
+                      <td className="px-4 py-3">{getDisplayStatus(account)}</td>
                       <td className="px-4 py-3">{account.ban_type === "VACLive" ? account.vac_live_remaining ?? "Expired" : "-"}</td>
                       <td className="px-4 py-3">{account.matchmaking_ready ? "Yes" : "No"}</td>
                       <td className="px-4 py-3">{account.is_public ? "Public" : "Private"}</td>

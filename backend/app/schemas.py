@@ -114,6 +114,8 @@ class SteamAccountOut(BaseModel):
     matchmaking_ready: bool
     is_public: bool
     avatar_url: str | None = None
+    online_status: str | None = None
+    game_status: str | None = None
     created_at: datetime
 
     class Config:
