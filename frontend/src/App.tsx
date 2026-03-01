@@ -106,7 +106,7 @@ function App() {
     apply_is_public: boolean;
   }>({
     ban_type: "None",
-    vac_live_value: "24",
+    vac_live_value: "20",
     vac_live_unit: "hours",
     matchmaking_ready: false,
     is_public: false,
@@ -120,7 +120,7 @@ function App() {
     password: "",
     email: "",
     ban_type: "None" as BanType,
-    vac_live_value: "24",
+    vac_live_value: "20",
     vac_live_unit: "hours" as "hours" | "days",
     matchmaking_ready: false,
     is_public: false,
@@ -131,7 +131,7 @@ function App() {
     password: "",
     email: "",
     ban_type: "None" as BanType,
-    vac_live_value: "24",
+    vac_live_value: "20",
     vac_live_unit: "hours" as "hours" | "days",
     matchmaking_ready: false,
     is_public: false,
@@ -382,7 +382,7 @@ function App() {
         password: "",
         email: "",
         ban_type: "None",
-        vac_live_value: "24",
+        vac_live_value: "20",
         vac_live_unit: "hours",
         matchmaking_ready: false,
         is_public: false,
@@ -456,7 +456,7 @@ function App() {
       password: account.password,
       email: account.email,
       ban_type: account.ban_type,
-      vac_live_value: "24",
+      vac_live_value: "20",
       vac_live_unit: "hours",
       matchmaking_ready: account.matchmaking_ready,
       is_public: account.is_public,
@@ -525,7 +525,7 @@ function App() {
   const openMultiEdit = () => {
     setMultiEdit({
       ban_type: "None",
-      vac_live_value: "24",
+      vac_live_value: "20",
       vac_live_unit: "hours",
       matchmaking_ready: false,
       is_public: false,
