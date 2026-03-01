@@ -94,12 +94,33 @@ function App() {
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<number>>(new Set());
 
+  const [multiEditOpen, setMultiEditOpen] = useState(false);
+  const [multiEdit, setMultiEdit] = useState<{
+    ban_type: BanType;
+    vac_live_value: string;
+    vac_live_unit: "hours" | "days";
+    matchmaking_ready: boolean;
+    is_public: boolean;
+    apply_ban_type: boolean;
+    apply_mm_ready: boolean;
+    apply_is_public: boolean;
+  }>({
+    ban_type: "None",
+    vac_live_value: "20",
+    vac_live_unit: "hours",
+    matchmaking_ready: false,
+    is_public: false,
+    apply_ban_type: false,
+    apply_mm_ready: false,
+    apply_is_public: false,
+  });
+
   const [newAccount, setNewAccount] = useState({
     username: "",
     password: "",
     email: "",
     ban_type: "None" as BanType,
-    vac_live_value: "24",
+    vac_live_value: "20",
     vac_live_unit: "hours" as "hours" | "days",
     matchmaking_ready: false,
     is_public: false,
@@ -110,7 +131,7 @@ function App() {
     password: "",
     email: "",
     ban_type: "None" as BanType,
-    vac_live_value: "24",
+    vac_live_value: "20",
     vac_live_unit: "hours" as "hours" | "days",
     matchmaking_ready: false,
     is_public: false,
@@ -361,7 +382,7 @@ function App() {
         password: "",
         email: "",
         ban_type: "None",
-        vac_live_value: "24",
+        vac_live_value: "20",
         vac_live_unit: "hours",
         matchmaking_ready: false,
         is_public: false,
@@ -435,7 +456,7 @@ function App() {
       password: account.password,
       email: account.email,
       ban_type: account.ban_type,
-      vac_live_value: "24",
+      vac_live_value: "20",
       vac_live_unit: "hours",
       matchmaking_ready: account.matchmaking_ready,
       is_public: account.is_public,
@@ -498,6 +519,53 @@ function App() {
       await loadAccounts();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unexpected delete error");
+    }
+  };
+
+  const openMultiEdit = () => {
+    setMultiEdit({
+      ban_type: "None",
+      vac_live_value: "20",
+      vac_live_unit: "hours",
+      matchmaking_ready: false,
+      is_public: false,
+      apply_ban_type: false,
+      apply_mm_ready: false,
+      apply_is_public: false,
+    });
+    setMultiEditOpen(true);
+  };
+
+  const handleMultiEdit = async (event: FormEvent) => {
+    event.preventDefault();
+    setError("");
+
+    try {
+      await Promise.all(
+        selectedOwnAccounts.map((account) => {
+          const payload: Record<string, unknown> = {
+            username: account.username,
+            password: account.password,
+            email: account.email,
+            ban_type: multiEdit.apply_ban_type ? multiEdit.ban_type : account.ban_type,
+            matchmaking_ready: multiEdit.apply_mm_ready ? multiEdit.matchmaking_ready : account.matchmaking_ready,
+            is_public: multiEdit.apply_is_public ? multiEdit.is_public : account.is_public,
+          };
+          const effectiveBanType = multiEdit.apply_ban_type ? multiEdit.ban_type : account.ban_type;
+          if (effectiveBanType === "VACLive" && multiEdit.apply_ban_type) {
+            payload.vac_live_value = Number(multiEdit.vac_live_value);
+            payload.vac_live_unit = multiEdit.vac_live_unit;
+          }
+          return apiFetch<Account>(`/accounts/${account.id}`, token, {
+            method: "PUT",
+            body: JSON.stringify(payload),
+          });
+        }),
+      );
+      setMultiEditOpen(false);
+      await loadAccounts();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unexpected multi-edit error");
     }
   };
 
@@ -806,10 +874,19 @@ function App() {
             </div>
 
             <div className="anime-panel flex flex-wrap items-center justify-between gap-3 rounded-3xl p-4 text-sm">
-              <p className="text-zinc-300">Export only accounts you created.</p>
+              <p className="text-zinc-300">Bulk actions &amp; export for your accounts.</p>
               <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className="rounded-xl border border-fuchsia-400/40 bg-fuchsia-500/15 px-3 py-2 text-fuchsia-100 hover:bg-fuchsia-500/25 disabled:opacity-50 transition"
+                  onClick={openMultiEdit}
+                  disabled={selectedOwnAccounts.length === 0}
+                >
+                  Edit Selected ({selectedOwnAccounts.length})
+                </button>
+                <span className="text-zinc-600">|</span>
                 <button type="button" className="anime-secondary-button px-3 py-2" onClick={handleExportAllOwnAccounts}>
-                  Export All My Accounts ({ownAccounts.length})
+                  Export All ({ownAccounts.length})
                 </button>
                 <button
                   type="button"
@@ -971,6 +1048,136 @@ function App() {
 
         {error && <div className="rounded-xl border border-rose-300/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div>}
       </div>
+
+      {multiEditOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 backdrop-blur-sm px-4">
+          <div className="anime-panel w-full max-w-lg rounded-3xl p-6 space-y-5">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-zinc-100">
+                Edit {selectedOwnAccounts.length} Account{selectedOwnAccounts.length !== 1 ? "s" : ""}
+              </h2>
+              <button
+                type="button"
+                className="rounded-lg border border-zinc-600 px-3 py-1 text-sm text-zinc-300 hover:bg-zinc-700/60"
+                onClick={() => setMultiEditOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-xs text-zinc-400">Only checked fields will be applied to all selected accounts. Unchecked fields remain unchanged.</p>
+            <form onSubmit={handleMultiEdit} className="space-y-4">
+
+              {/* Ban Type */}
+              <div className="rounded-xl border border-zinc-700/60 bg-zinc-900/40 p-4 space-y-3">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={multiEdit.apply_ban_type}
+                    onChange={(e) => setMultiEdit({ ...multiEdit, apply_ban_type: e.target.checked })}
+                  />
+                  <span className="text-sm font-medium text-zinc-200">Ban Type</span>
+                </label>
+                {multiEdit.apply_ban_type && (
+                  <div className="space-y-3 pl-6">
+                    <select
+                      className="anime-input w-full"
+                      value={multiEdit.ban_type}
+                      onChange={(e) => setMultiEdit({ ...multiEdit, ban_type: e.target.value as BanType })}
+                    >
+                      <option value="None">Not banned</option>
+                      <option value="VAC">VAC</option>
+                      <option value="GameBanned">Game Banned</option>
+                      <option value="VACLive">VAC Live</option>
+                    </select>
+                    {multiEdit.ban_type === "VACLive" && (
+                      <div className="flex gap-2">
+                        <input
+                          className="anime-input flex-1"
+                          type="number"
+                          min={1}
+                          max={365}
+                          placeholder="Duration"
+                          value={multiEdit.vac_live_value}
+                          onChange={(e) => setMultiEdit({ ...multiEdit, vac_live_value: e.target.value })}
+                        />
+                        <select
+                          className="anime-input w-32"
+                          value={multiEdit.vac_live_unit}
+                          onChange={(e) => setMultiEdit({ ...multiEdit, vac_live_unit: e.target.value as "hours" | "days" })}
+                        >
+                          <option value="hours">Hours</option>
+                          <option value="days">Days</option>
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* MM Ready */}
+              <div className="rounded-xl border border-zinc-700/60 bg-zinc-900/40 p-4 space-y-3">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={multiEdit.apply_mm_ready}
+                    onChange={(e) => setMultiEdit({ ...multiEdit, apply_mm_ready: e.target.checked })}
+                  />
+                  <span className="text-sm font-medium text-zinc-200">Matchmaking Ready</span>
+                </label>
+                {multiEdit.apply_mm_ready && (
+                  <label className="flex items-center gap-2 pl-6 cursor-pointer text-sm text-zinc-300">
+                    <input
+                      type="checkbox"
+                      checked={multiEdit.matchmaking_ready}
+                      onChange={(e) => setMultiEdit({ ...multiEdit, matchmaking_ready: e.target.checked })}
+                    />
+                    Set as Matchmaking Ready (Level 2)
+                  </label>
+                )}
+              </div>
+
+              {/* Visibility */}
+              <div className="rounded-xl border border-zinc-700/60 bg-zinc-900/40 p-4 space-y-3">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={multiEdit.apply_is_public}
+                    onChange={(e) => setMultiEdit({ ...multiEdit, apply_is_public: e.target.checked })}
+                  />
+                  <span className="text-sm font-medium text-zinc-200">Visibility</span>
+                </label>
+                {multiEdit.apply_is_public && (
+                  <label className="flex items-center gap-2 pl-6 cursor-pointer text-sm text-zinc-300">
+                    <input
+                      type="checkbox"
+                      checked={multiEdit.is_public}
+                      onChange={(e) => setMultiEdit({ ...multiEdit, is_public: e.target.checked })}
+                    />
+                    Set as Public
+                  </label>
+                )}
+              </div>
+
+              <div className="flex gap-3 pt-1">
+                <button
+                  type="submit"
+                  className="anime-primary-button flex-1"
+                  disabled={!multiEdit.apply_ban_type && !multiEdit.apply_mm_ready && !multiEdit.apply_is_public}
+                >
+                  Apply to {selectedOwnAccounts.length} Account{selectedOwnAccounts.length !== 1 ? "s" : ""}
+                </button>
+                <button
+                  type="button"
+                  className="anime-secondary-button px-5"
+                  onClick={() => setMultiEditOpen(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
