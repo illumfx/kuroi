@@ -22,6 +22,12 @@ class BanType(str, Enum):
     VAC_LIVE = "VACLive"
 
 
+class SuggestionStatus(str, Enum):
+    PENDING = "Pending"
+    ACCEPTED = "Accepted"
+    DECLINED = "Declined"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -90,3 +96,19 @@ class SteamAccount(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     owner: Mapped[User] = relationship("User", back_populates="accounts")
+
+
+class AccountSuggestion(Base):
+    __tablename__ = "account_suggestions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("steam_accounts.id"), index=True)
+    suggested_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    suggested_ban_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    suggested_matchmaking_ready: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    suggested_is_public: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[SuggestionStatus] = mapped_column(SQLEnum(SuggestionStatus), default=SuggestionStatus.PENDING, index=True)
+    resolved_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

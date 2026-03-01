@@ -10,7 +10,7 @@
 ---
 
 > [!NOTE]
-> kuroi is mostly vibe-coded.
+> kuroi is mostly vibe-coded and not in a stable state.
 
 ## Production model (simplified)
 

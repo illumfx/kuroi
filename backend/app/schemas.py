@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field, model_validator
 
-from .models import BanStatus, BanType
+from .models import BanStatus, BanType, SuggestionStatus
 
 
 class UserOut(BaseModel):
@@ -120,6 +120,7 @@ class SteamAccountOut(BaseModel):
     requires_review: bool = False
     suggested_changes: list[str] = []
     suggested_ban_type: BanType | None = None
+    pending_review_count: int = 0
     created_at: datetime
 
     class Config:
@@ -141,3 +142,40 @@ class MassImportResponse(BaseModel):
     created: int
     failed: int
     errors: list[MassImportError]
+
+
+class AccountSuggestionCreate(BaseModel):
+    suggested_ban_type: BanType | None = None
+    suggested_matchmaking_ready: bool | None = None
+    suggested_is_public: bool | None = None
+    note: str | None = Field(default=None, min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_has_change(self):
+        if (
+            self.suggested_ban_type is None
+            and self.suggested_matchmaking_ready is None
+            and self.suggested_is_public is None
+            and self.note is None
+        ):
+            raise ValueError("At least one suggested change or note is required")
+        if self.suggested_ban_type == BanType.VAC_LIVE:
+            raise ValueError("VAC Live cannot be suggested without duration details")
+        return self
+
+
+class AccountSuggestionResolve(BaseModel):
+    action: Literal["accept", "decline"]
+
+
+class AccountSuggestionOut(BaseModel):
+    id: int
+    account_id: int
+    suggested_by_id: int
+    suggested_by_username: str
+    suggested_ban_type: BanType | None = None
+    suggested_matchmaking_ready: bool | None = None
+    suggested_is_public: bool | None = None
+    note: str | None = None
+    status: SuggestionStatus
+    created_at: datetime

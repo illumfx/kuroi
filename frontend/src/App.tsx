@@ -16,6 +16,7 @@ type Account = {
   requires_review?: boolean;
   suggested_changes?: string[];
   suggested_ban_type?: BanType | null;
+  pending_review_count?: number;
   ban_type: BanType;
   vac_live_remaining?: string | null;
   matchmaking_ready: boolean;
@@ -53,6 +54,19 @@ type MassImportResponse = {
   created: number;
   failed: number;
   errors: MassImportError[];
+};
+
+type AccountSuggestion = {
+  id: number;
+  account_id: number;
+  suggested_by_id: number;
+  suggested_by_username: string;
+  suggested_ban_type?: BanType | null;
+  suggested_matchmaking_ready?: boolean | null;
+  suggested_is_public?: boolean | null;
+  note?: string | null;
+  status: "Pending" | "Accepted" | "Declined";
+  created_at: string;
 };
 
 type SortOption = "mm_ready" | "mm_not_ready" | "newest" | "oldest" | "username_asc" | "username_desc";
@@ -94,7 +108,23 @@ function App() {
 
   const [generatedApiKey, setGeneratedApiKey] = useState("");
   const [editingAccountId, setEditingAccountId] = useState<number | null>(null);
-  const [applyingSuggestionAccountId, setApplyingSuggestionAccountId] = useState<number | null>(null);
+  const [suggestAccount, setSuggestAccount] = useState<Account | null>(null);
+  const [reviewAccount, setReviewAccount] = useState<Account | null>(null);
+  const [reviewSuggestions, setReviewSuggestions] = useState<AccountSuggestion[]>([]);
+  const [isLoadingReviewSuggestions, setIsLoadingReviewSuggestions] = useState(false);
+  const [isSubmittingSuggestion, setIsSubmittingSuggestion] = useState(false);
+  const [resolvingSuggestionId, setResolvingSuggestionId] = useState<number | null>(null);
+  const [suggestionForm, setSuggestionForm] = useState<{
+    suggested_ban_type: "" | BanType;
+    suggested_matchmaking_ready: "" | "true" | "false";
+    suggested_is_public: "" | "true" | "false";
+    note: string;
+  }>({
+    suggested_ban_type: "",
+    suggested_matchmaking_ready: "",
+    suggested_is_public: "",
+    note: "",
+  });
   const [massImportContent, setMassImportContent] = useState("");
   const [massImportPublic, setMassImportPublic] = useState(false);
   const [massImportResult, setMassImportResult] = useState<MassImportResponse | null>(null);
@@ -542,36 +572,83 @@ function App() {
     }
   };
 
-  const handleApplySuggestedBanType = async (account: Account) => {
-    if (!account.suggested_ban_type || account.suggested_ban_type === account.ban_type) {
+  const openSuggestModal = (account: Account) => {
+    setSuggestAccount(account);
+    setSuggestionForm({
+      suggested_ban_type: "",
+      suggested_matchmaking_ready: "",
+      suggested_is_public: "",
+      note: "",
+    });
+  };
+
+  const handleSubmitSuggestion = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!suggestAccount) {
       return;
     }
 
     setError("");
-    setApplyingSuggestionAccountId(account.id);
+    setIsSubmittingSuggestion(true);
     try {
-      const payload: Record<string, unknown> = {
-        username: account.username,
-        password: account.password,
-        email: account.email,
-        ban_type: account.suggested_ban_type,
-        matchmaking_ready: account.matchmaking_ready,
-        is_public: account.is_public,
-      };
-      const steamId = account.steam_id64?.trim();
-      if (steamId) {
-        payload.steam_id = steamId;
+      const payload: Record<string, unknown> = {};
+      if (suggestionForm.suggested_ban_type) {
+        payload.suggested_ban_type = suggestionForm.suggested_ban_type;
+      }
+      if (suggestionForm.suggested_matchmaking_ready) {
+        payload.suggested_matchmaking_ready = suggestionForm.suggested_matchmaking_ready === "true";
+      }
+      if (suggestionForm.suggested_is_public) {
+        payload.suggested_is_public = suggestionForm.suggested_is_public === "true";
+      }
+      const note = suggestionForm.note.trim();
+      if (note) {
+        payload.note = note;
       }
 
-      await apiFetch<Account>(`/accounts/${account.id}`, token, {
-        method: "PUT",
+      await apiFetch<AccountSuggestion>(`/accounts/${suggestAccount.id}/suggestions`, token, {
+        method: "POST",
         body: JSON.stringify(payload),
       });
+      setSuggestAccount(null);
       await loadAccounts();
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Could not apply suggestion");
+      setError(requestError instanceof Error ? requestError.message : "Could not submit suggestion");
     } finally {
-      setApplyingSuggestionAccountId(null);
+      setIsSubmittingSuggestion(false);
+    }
+  };
+
+  const openReviewModal = async (account: Account) => {
+    setReviewAccount(account);
+    setError("");
+    setIsLoadingReviewSuggestions(true);
+    try {
+      const items = await apiFetch<AccountSuggestion[]>(`/accounts/${account.id}/suggestions`, token);
+      setReviewSuggestions(items);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Could not load suggestions");
+      setReviewSuggestions([]);
+    } finally {
+      setIsLoadingReviewSuggestions(false);
+    }
+  };
+
+  const handleResolveSuggestion = async (account: Account, suggestionId: number, action: "accept" | "decline") => {
+    setResolvingSuggestionId(suggestionId);
+    setError("");
+    try {
+      await apiFetch<Account>(`/accounts/${account.id}/suggestions/${suggestionId}/resolve`, token, {
+        method: "POST",
+        body: JSON.stringify({ action }),
+      });
+      const items = await apiFetch<AccountSuggestion[]>(`/accounts/${account.id}/suggestions`, token);
+      setReviewSuggestions(items);
+      await loadAccounts();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Could not resolve suggestion");
+    } finally {
+      setResolvingSuggestionId(null);
     }
   };
 
@@ -751,9 +828,6 @@ function App() {
   const getReviewSuggestions = (account: Account) => account.suggested_changes ?? [];
 
   const getRowClassName = (account: Account) => {
-    if (account.requires_review && currentUserId === account.owner_id) {
-      return "bg-amber-500/5 ring-1 ring-inset ring-amber-400/30 hover:bg-amber-500/10";
-    }
     return "hover:bg-zinc-800/35";
   };
 
@@ -877,7 +951,7 @@ function App() {
             )}
 
             <div className="anime-panel overflow-x-auto rounded-3xl">
-              <table className="min-w-[1550px] w-full divide-y divide-zinc-700/60">
+              <table className="min-w-[1460px] w-full divide-y divide-zinc-700/60">
                 <thead className="bg-zinc-900/70">
                   <tr>
                     <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">
@@ -982,41 +1056,20 @@ function App() {
                       <td className="px-4 py-3">{account.matchmaking_ready ? "Yes" : "No"}</td>
                       <td className="px-4 py-3">{account.is_public ? "Public" : "Private"}</td>
                       <td className="px-4 py-3">
-                        {account.requires_review ? (
-                          <div className="space-y-2">
-                            <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium ${currentUserId === account.owner_id ? "border-amber-300/60 bg-amber-500/20 text-amber-100" : "border-zinc-600 bg-zinc-800/70 text-zinc-200"}`}>
-                              {currentUserId === account.owner_id ? "Check required" : "Owner check pending"}
-                            </span>
-                            <ul className="max-w-[280px] space-y-1">
-                              {getReviewSuggestions(account).slice(0, 2).map((suggestion, index) => (
-                                <li key={`${account.id}-suggestion-${index}`} className="rounded-md border border-amber-300/20 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-100">
-                                  {suggestion}
-                                </li>
-                              ))}
-                              {getReviewSuggestions(account).length > 2 && (
-                                <li className="text-[11px] text-zinc-300">+{getReviewSuggestions(account).length - 2} more</li>
-                              )}
-                            </ul>
-                            {currentUserId === account.owner_id && account.suggested_ban_type && account.suggested_ban_type !== account.ban_type && (
-                              <button
-                                type="button"
-                                className="rounded-md border border-fuchsia-300/40 bg-fuchsia-500/15 px-2 py-1 text-[11px] font-medium text-fuchsia-100 transition hover:bg-fuchsia-500/25 disabled:opacity-50"
-                                disabled={applyingSuggestionAccountId === account.id}
-                                onClick={() => handleApplySuggestedBanType(account)}
-                              >
-                                {applyingSuggestionAccountId === account.id ? "Applying..." : `Apply ${account.suggested_ban_type}`}
-                              </button>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="inline-flex rounded-full border border-emerald-300/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-200">
-                            No review needed
-                          </span>
-                        )}
+                        {currentUserId === account.owner_id && (account.pending_review_count ?? 0) > 0 ? (
+                          <span className="inline-block h-2.5 w-2.5 rounded-full bg-sky-400 shadow-[0_0_10px_rgba(56,189,248,0.7)]" />
+                        ) : null}
                       </td>
                       <td className="px-4 py-3 pr-6">
                         {currentUserId === account.owner_id ? (
                           <div className="flex gap-2">
+                            <button
+                              type="button"
+                              className="rounded-lg border border-sky-300/40 bg-sky-500/10 px-2 py-1 text-xs text-sky-100 hover:bg-sky-500/20"
+                              onClick={() => openReviewModal(account)}
+                            >
+                              Review{(account.pending_review_count ?? 0) > 0 ? ` (${account.pending_review_count})` : ""}
+                            </button>
                             <button type="button" className="anime-secondary-button px-2 py-1 text-xs" onClick={() => startEditAccount(account)}>
                               Edit
                             </button>
@@ -1025,7 +1078,13 @@ function App() {
                             </button>
                           </div>
                         ) : (
-                          <span className="text-xs text-zinc-400">View only</span>
+                          <button
+                            type="button"
+                            className="rounded-lg border border-fuchsia-300/40 bg-fuchsia-500/10 px-2 py-1 text-xs text-fuchsia-100 hover:bg-fuchsia-500/20"
+                            onClick={() => openSuggestModal(account)}
+                          >
+                            Suggest
+                          </button>
                         )}
                       </td>
                     </tr>
@@ -1338,6 +1397,105 @@ function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {suggestAccount && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 backdrop-blur-sm px-4">
+          <div className="anime-panel w-full max-w-lg rounded-3xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-zinc-100">Suggest changes for {suggestAccount.username}</h2>
+              <button type="button" className="rounded-lg border border-zinc-600 px-3 py-1 text-sm text-zinc-300 hover:bg-zinc-700/60" onClick={() => setSuggestAccount(null)}>✕</button>
+            </div>
+            <form onSubmit={handleSubmitSuggestion} className="space-y-3">
+              <select
+                className="anime-input w-full"
+                value={suggestionForm.suggested_ban_type}
+                onChange={(event) => setSuggestionForm({ ...suggestionForm, suggested_ban_type: event.target.value as "" | BanType })}
+              >
+                <option value="">Ban Type: No change</option>
+                <option value="None">Ban Type: None</option>
+                <option value="VAC">Ban Type: VAC</option>
+                <option value="GameBanned">Ban Type: GameBanned</option>
+              </select>
+              <select
+                className="anime-input w-full"
+                value={suggestionForm.suggested_matchmaking_ready}
+                onChange={(event) => setSuggestionForm({ ...suggestionForm, suggested_matchmaking_ready: event.target.value as "" | "true" | "false" })}
+              >
+                <option value="">MM Ready: No change</option>
+                <option value="true">MM Ready: Yes</option>
+                <option value="false">MM Ready: No</option>
+              </select>
+              <select
+                className="anime-input w-full"
+                value={suggestionForm.suggested_is_public}
+                onChange={(event) => setSuggestionForm({ ...suggestionForm, suggested_is_public: event.target.value as "" | "true" | "false" })}
+              >
+                <option value="">Visibility: No change</option>
+                <option value="true">Visibility: Public</option>
+                <option value="false">Visibility: Private</option>
+              </select>
+              <textarea
+                className="anime-input min-h-24 w-full"
+                placeholder="Optional note"
+                value={suggestionForm.note}
+                onChange={(event) => setSuggestionForm({ ...suggestionForm, note: event.target.value })}
+              />
+              <div className="flex gap-3">
+                <button className="anime-primary-button flex-1" disabled={isSubmittingSuggestion}>{isSubmittingSuggestion ? "Sending..." : "Send Suggestion"}</button>
+                <button type="button" className="anime-secondary-button px-5" onClick={() => setSuggestAccount(null)}>Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {reviewAccount && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 backdrop-blur-sm px-4">
+          <div className="anime-panel w-full max-w-2xl rounded-3xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-zinc-100">Review suggestions for {reviewAccount.username}</h2>
+              <button type="button" className="rounded-lg border border-zinc-600 px-3 py-1 text-sm text-zinc-300 hover:bg-zinc-700/60" onClick={() => { setReviewAccount(null); setReviewSuggestions([]); }}>✕</button>
+            </div>
+            {isLoadingReviewSuggestions ? (
+              <p className="text-sm text-zinc-300">Loading suggestions...</p>
+            ) : reviewSuggestions.length === 0 ? (
+              <p className="text-sm text-zinc-300">No pending suggestions.</p>
+            ) : (
+              <div className="space-y-3 max-h-[420px] overflow-auto pr-1">
+                {reviewSuggestions.map((suggestion) => (
+                  <div key={suggestion.id} className="rounded-xl border border-zinc-700/60 bg-zinc-900/50 p-3 space-y-2">
+                    <p className="text-xs text-zinc-400">From {suggestion.suggested_by_username}</p>
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      {suggestion.suggested_ban_type && <span className="rounded-full border border-fuchsia-300/40 bg-fuchsia-500/10 px-2 py-0.5 text-fuchsia-100">Ban: {suggestion.suggested_ban_type}</span>}
+                      {suggestion.suggested_matchmaking_ready !== null && suggestion.suggested_matchmaking_ready !== undefined && <span className="rounded-full border border-sky-300/40 bg-sky-500/10 px-2 py-0.5 text-sky-100">MM Ready: {suggestion.suggested_matchmaking_ready ? "Yes" : "No"}</span>}
+                      {suggestion.suggested_is_public !== null && suggestion.suggested_is_public !== undefined && <span className="rounded-full border border-emerald-300/40 bg-emerald-500/10 px-2 py-0.5 text-emerald-100">Visibility: {suggestion.suggested_is_public ? "Public" : "Private"}</span>}
+                    </div>
+                    {suggestion.note && <p className="text-sm text-zinc-200">{suggestion.note}</p>}
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        className="rounded-md border border-emerald-300/40 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-100 hover:bg-emerald-500/20 disabled:opacity-50"
+                        disabled={resolvingSuggestionId === suggestion.id}
+                        onClick={() => handleResolveSuggestion(reviewAccount, suggestion.id, "accept")}
+                      >
+                        Accept
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-md border border-rose-300/40 bg-rose-500/10 px-3 py-1 text-xs text-rose-100 hover:bg-rose-500/20 disabled:opacity-50"
+                        disabled={resolvingSuggestionId === suggestion.id}
+                        onClick={() => handleResolveSuggestion(reviewAccount, suggestion.id, "decline")}
+                      >
+                        Decline
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -25,9 +25,12 @@ from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
 from .database import Base, SessionLocal, engine, get_db
-from .models import APIKey, InviteCode, SteamAccount, User
-from .models import BanStatus, BanType
+from .models import APIKey, AccountSuggestion, InviteCode, SteamAccount, User
+from .models import BanStatus, BanType, SuggestionStatus
 from .schemas import (
+    AccountSuggestionCreate,
+    AccountSuggestionOut,
+    AccountSuggestionResolve,
     APIKeyCreateRequest,
     APIKeyCreateResponse,
     InviteCreateRequest,
@@ -325,7 +328,7 @@ def format_remaining_time(expires_at: datetime | None) -> str | None:
     return f"{max(total_hours, 1)} hour(s)"
 
 
-def serialize_account(account: SteamAccount) -> SteamAccountOut:
+def serialize_account(account: SteamAccount, *, pending_review_count: int = 0) -> SteamAccountOut:
     suggestions, suggested_ban_type = build_account_suggestions(account)
     payload = {
         "id": account.id,
@@ -347,9 +350,29 @@ def serialize_account(account: SteamAccount) -> SteamAccountOut:
         "requires_review": len(suggestions) > 0,
         "suggested_changes": suggestions,
         "suggested_ban_type": suggested_ban_type,
+        "pending_review_count": pending_review_count,
         "created_at": account.created_at,
     }
     return SteamAccountOut.model_validate(payload)
+
+
+def serialize_suggestion(suggestion: AccountSuggestion, suggested_by_username: str) -> AccountSuggestionOut:
+    suggested_ban_type = None
+    if suggestion.suggested_ban_type and suggestion.suggested_ban_type in BanType._value2member_map_:
+        suggested_ban_type = BanType(suggestion.suggested_ban_type)
+
+    return AccountSuggestionOut(
+        id=suggestion.id,
+        account_id=suggestion.account_id,
+        suggested_by_id=suggestion.suggested_by_id,
+        suggested_by_username=suggested_by_username,
+        suggested_ban_type=suggested_ban_type,
+        suggested_matchmaking_ready=suggestion.suggested_matchmaking_ready,
+        suggested_is_public=suggestion.suggested_is_public,
+        note=suggestion.note,
+        status=suggestion.status,
+        created_at=suggestion.created_at,
+    )
 
 
 def build_account_suggestions(account: SteamAccount) -> tuple[list[str], BanType | None]:
@@ -1054,7 +1077,128 @@ def list_accounts(
     query = query.order_by(SteamAccount.created_at.desc())
 
     accounts = db.scalars(query).all()
-    return [serialize_account(account) for account in accounts]
+    account_ids = [account.id for account in accounts]
+    pending_counts: dict[int, int] = {}
+    if account_ids:
+        count_rows = db.execute(
+            select(AccountSuggestion.account_id, func.count(AccountSuggestion.id))
+            .where(
+                AccountSuggestion.account_id.in_(account_ids),
+                AccountSuggestion.status == SuggestionStatus.PENDING,
+            )
+            .group_by(AccountSuggestion.account_id)
+        ).all()
+        pending_counts = {int(account_id): int(count) for account_id, count in count_rows}
+
+    return [serialize_account(account, pending_review_count=pending_counts.get(account.id, 0)) for account in accounts]
+
+
+@app.post("/accounts/{account_id}/suggestions", response_model=AccountSuggestionOut, status_code=status.HTTP_201_CREATED)
+def create_account_suggestion(
+    account_id: int,
+    payload: AccountSuggestionCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    account = db.get(SteamAccount, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    if account.owner_id == user.id:
+        raise HTTPException(status_code=400, detail="Owners cannot suggest changes for their own account")
+    if not account.is_public:
+        raise HTTPException(status_code=403, detail="Only public accounts can receive external suggestions")
+
+    suggestion = AccountSuggestion(
+        account_id=account.id,
+        suggested_by_id=user.id,
+        suggested_ban_type=payload.suggested_ban_type.value if payload.suggested_ban_type else None,
+        suggested_matchmaking_ready=payload.suggested_matchmaking_ready,
+        suggested_is_public=payload.suggested_is_public,
+        note=payload.note.strip() if payload.note else None,
+        status=SuggestionStatus.PENDING,
+    )
+    db.add(suggestion)
+    db.commit()
+    db.refresh(suggestion)
+    return serialize_suggestion(suggestion, suggested_by_username=user.username)
+
+
+@app.get("/accounts/{account_id}/suggestions", response_model=list[AccountSuggestionOut])
+def list_account_suggestions(
+    account_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    account = db.get(SteamAccount, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if account.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="Only the account owner can review suggestions")
+
+    suggestions = db.scalars(
+        select(AccountSuggestion)
+        .where(AccountSuggestion.account_id == account_id, AccountSuggestion.status == SuggestionStatus.PENDING)
+        .order_by(AccountSuggestion.created_at.asc())
+    ).all()
+    if not suggestions:
+        return []
+
+    suggester_ids = sorted({suggestion.suggested_by_id for suggestion in suggestions})
+    suggesters = db.scalars(select(User).where(User.id.in_(suggester_ids))).all()
+    username_by_id = {entry.id: entry.username for entry in suggesters}
+    return [serialize_suggestion(suggestion, username_by_id.get(suggestion.suggested_by_id, "unknown")) for suggestion in suggestions]
+
+
+@app.post("/accounts/{account_id}/suggestions/{suggestion_id}/resolve", response_model=SteamAccountOut)
+def resolve_account_suggestion(
+    account_id: int,
+    suggestion_id: int,
+    payload: AccountSuggestionResolve,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    account = db.get(SteamAccount, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if account.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="Only the account owner can resolve suggestions")
+
+    suggestion = db.get(AccountSuggestion, suggestion_id)
+    if not suggestion or suggestion.account_id != account_id:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+    if suggestion.status != SuggestionStatus.PENDING:
+        raise HTTPException(status_code=400, detail="Suggestion already resolved")
+
+    if payload.action == "accept":
+        if suggestion.suggested_ban_type and suggestion.suggested_ban_type in BanType._value2member_map_:
+            account.ban_type = suggestion.suggested_ban_type
+            if suggestion.suggested_ban_type == BanType.NONE.value:
+                account.ban_status = BanStatus.CLEAN
+                account.vac_live_expires_at = None
+            elif suggestion.suggested_ban_type in {BanType.VAC.value, BanType.GAME_BANNED.value}:
+                account.ban_status = BanStatus.BAN
+                account.vac_live_expires_at = None
+        if suggestion.suggested_matchmaking_ready is not None:
+            account.matchmaking_ready = suggestion.suggested_matchmaking_ready
+        if suggestion.suggested_is_public is not None:
+            account.is_public = suggestion.suggested_is_public
+
+    suggestion.status = SuggestionStatus.ACCEPTED if payload.action == "accept" else SuggestionStatus.DECLINED
+    suggestion.resolved_by_id = user.id
+    suggestion.resolved_at = datetime.now(timezone.utc)
+    db.add(account)
+    db.add(suggestion)
+    db.commit()
+    db.refresh(account)
+
+    pending_count = db.scalar(
+        select(func.count(AccountSuggestion.id)).where(
+            AccountSuggestion.account_id == account.id,
+            AccountSuggestion.status == SuggestionStatus.PENDING,
+        )
+    )
+    return serialize_account(account, pending_review_count=int(pending_count or 0))
 
 
 @app.put("/accounts/{account_id}", response_model=SteamAccountOut)
