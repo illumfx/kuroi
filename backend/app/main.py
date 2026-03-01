@@ -108,7 +108,10 @@ Base.metadata.create_all(bind=engine)
 
 def ensure_schema_extensions() -> None:
     inspector = inspect(engine)
-    column_names = {column["name"] for column in inspector.get_columns("steam_accounts")}
+    columns = inspector.get_columns("steam_accounts")
+    column_names = {column["name"] for column in columns}
+    steam_id64_column = next((column for column in columns if column.get("name") == "steam_id64"), None)
+    steam_id64_is_nullable = bool(steam_id64_column and steam_id64_column.get("nullable", False))
 
     with engine.begin() as connection:
         if "ban_type" not in column_names:
@@ -121,12 +124,13 @@ def ensure_schema_extensions() -> None:
             connection.exec_driver_sql("ALTER TABLE steam_accounts ADD COLUMN online_status VARCHAR(32)")
         if "game_status" not in column_names:
             connection.exec_driver_sql("ALTER TABLE steam_accounts ADD COLUMN game_status VARCHAR(255)")
-        try:
+
+        if steam_id64_is_nullable:
             connection.execute(
                 text("UPDATE steam_accounts SET steam_id64 = NULL WHERE steam_id64 LIKE :pattern"),
                 {"pattern": "local_%"},
             )
-        except Exception:
+        else:
             connection.execute(
                 text(
                     "UPDATE steam_accounts "
