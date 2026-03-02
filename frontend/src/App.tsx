@@ -72,6 +72,11 @@ type AccountSuggestion = {
 };
 
 type SortOption = "mm_ready" | "mm_not_ready" | "newest" | "oldest" | "username_asc" | "username_desc";
+type ViewMode = "table" | "cards" | "compact" | "kanban" | "gallery" | "stats";
+
+const VIEW_MODE_STORAGE_KEY = "kuroi_view_mode";
+const isViewMode = (value: string | null): value is ViewMode =>
+  value === "table" || value === "cards" || value === "compact" || value === "kanban" || value === "gallery" || value === "stats";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 const oidcEnabledFromEnv = (import.meta.env.VITE_OIDC_ENABLED ?? "false") === "true";
@@ -111,6 +116,10 @@ function App() {
   const [banFilter, setBanFilter] = useState<"all" | BanType>("all");
   const [usernameSearch, setUsernameSearch] = useState("");
   const [sortOption, setSortOption] = useState<SortOption>("mm_ready");
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    const stored = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+    return isViewMode(stored) ? stored : "table";
+  });
   const [showPublicAccounts, setShowPublicAccounts] = useState(false);
   const [showOnlyPendingReviews, setShowOnlyPendingReviews] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -276,6 +285,25 @@ function App() {
     () => accounts.filter((account) => currentUserId !== null && account.owner_id === currentUserId && (account.pending_review_count ?? 0) > 0).length,
     [accounts, currentUserId],
   );
+  const kanbanColumns = useMemo(
+    () => ({
+      clean: paginatedAccounts.filter((account) => account.ban_type === "None"),
+      banned: paginatedAccounts.filter((account) => account.ban_type === "VAC" || account.ban_type === "GameBanned"),
+      vacLive: paginatedAccounts.filter((account) => account.ban_type === "VACLive"),
+    }),
+    [paginatedAccounts],
+  );
+  const accountStats = useMemo(() => {
+    const total = sortedAccounts.length;
+    const mmReady = sortedAccounts.filter((account) => account.matchmaking_ready).length;
+    const publicCount = sortedAccounts.filter((account) => account.is_public).length;
+    const vacLive = sortedAccounts.filter((account) => account.ban_type === "VACLive").length;
+    const banned = sortedAccounts.filter((account) => account.ban_type === "VAC" || account.ban_type === "GameBanned").length;
+    const clean = sortedAccounts.filter((account) => account.ban_type === "None").length;
+    const pendingReviews = sortedAccounts.filter((account) => (account.pending_review_count ?? 0) > 0).length;
+
+    return { total, mmReady, publicCount, vacLive, banned, clean, pendingReviews };
+  }, [sortedAccounts]);
 
   useEffect(() => {
     if (ownPendingReviewCount > lastOwnPendingReviewCountRef.current) {
@@ -297,6 +325,10 @@ function App() {
 
     lastOwnPendingReviewCountRef.current = ownPendingReviewCount;
   }, [ownPendingReviewCount]);
+
+  useEffect(() => {
+    localStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
+  }, [viewMode]);
 
   useEffect(() => {
     return () => {
@@ -954,6 +986,77 @@ function App() {
     return "hover:bg-zinc-800/35";
   };
 
+  const modeOptions: Array<{ id: ViewMode; label: string }> = [
+    { id: "table", label: "Table" },
+    { id: "cards", label: "Cards" },
+    { id: "compact", label: "Compact" },
+    { id: "kanban", label: "Kanban" },
+    { id: "gallery", label: "Gallery" },
+    { id: "stats", label: "Stats" },
+  ];
+
+  const renderAccountAvatar = (account: Account, sizeClassName = "h-9 w-9") => (
+    <div className="group relative inline-flex">
+      {account.avatar_url ? (
+        <img
+          src={account.avatar_url}
+          alt="Avatar"
+          aria-label={getAvatarHoverTitle(account)}
+          className={`${sizeClassName} rounded-full border ${getAvatarBorderClass(account)}`}
+        />
+      ) : (
+        <div
+          aria-label={getAvatarHoverTitle(account)}
+          className={`${sizeClassName} rounded-full border ${getAvatarBorderClass(account)} bg-zinc-700`}
+        />
+      )}
+      <div className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 max-w-[240px] -translate-x-1/2 overflow-hidden text-ellipsis whitespace-nowrap rounded-lg border border-zinc-700 bg-zinc-950/95 px-2 py-1 text-xs text-zinc-100 opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100">
+        {getAvatarHoverTitle(account)}
+      </div>
+    </div>
+  );
+
+  const renderAccountActions = (account: Account, compact = false) => {
+    if (currentUserId === account.owner_id) {
+      return (
+        <div className={`flex ${compact ? "flex-wrap" : ""} gap-1.5`}>
+          <button
+            type="button"
+            className="inline-flex items-center rounded-lg border border-sky-300/40 bg-sky-500/10 px-2 py-1 text-[11px] text-sky-100 hover:bg-sky-500/20"
+            title={reviewButtonHints[account.id] ?? ((account.pending_review_count ?? 0) > 0 ? `Pending suggestions: ${account.pending_review_count}` : "No pending suggestions")}
+            onMouseEnter={() => {
+              void prefetchReviewHint(account);
+            }}
+            onClick={() => openReviewModal(account)}
+          >
+            Review
+            {(account.pending_review_count ?? 0) > 0 && (
+              <span className={`ml-1 inline-flex min-h-4 min-w-4 items-center justify-center rounded-full border border-sky-200/70 bg-sky-400 px-1 text-[10px] font-semibold leading-none text-zinc-950 shadow-[0_0_10px_rgba(56,189,248,0.7)] ${hasNewPendingReviewsPulse ? "animate-pulse" : ""}`}>
+                {account.pending_review_count}
+              </span>
+            )}
+          </button>
+          <button type="button" className="anime-secondary-button px-2 py-1 text-xs" onClick={() => startEditAccount(account)}>
+            Edit
+          </button>
+          <button type="button" className="rounded-lg border border-rose-400/40 px-2 py-1 text-xs text-rose-200 hover:bg-rose-500/20" onClick={() => handleDeleteAccount(account.id)}>
+            Delete
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <button
+        type="button"
+        className="rounded-lg border border-fuchsia-300/40 bg-fuchsia-500/10 px-2 py-1 text-xs text-fuchsia-100 hover:bg-fuchsia-500/20"
+        onClick={() => openSuggestModal(account)}
+      >
+        Suggest
+      </button>
+    );
+  };
+
   return (
     <div className="relative min-h-screen overflow-hidden bg-zinc-950 px-4 py-8 text-zinc-100">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(244,114,182,0.18),transparent_45%),radial-gradient(circle_at_15%_20%,rgba(99,102,241,0.25),transparent_42%)]" />
@@ -1003,54 +1106,66 @@ function App() {
           </div>
         ) : (
           <div className="space-y-6">
-            <div className="anime-panel flex flex-wrap items-center gap-3 rounded-3xl p-4">
-              <label className="text-sm text-zinc-300">Ban Type</label>
-              <select className="anime-input max-w-44" value={banFilter} onChange={(event) => handleFilterChange(event.target.value as "all" | BanType)}>
-                <option value="all">All</option>
-                <option value="None">Not banned</option>
-                <option value="VAC">VAC</option>
-                <option value="GameBanned">Game Banned</option>
-                <option value="VACLive">VAC Live</option>
-              </select>
-              <label className="text-sm text-zinc-300">Search</label>
-              <input
-                className="anime-input max-w-64"
-                placeholder="Search username"
-                value={usernameSearch}
-                onChange={(event) => setUsernameSearch(event.target.value)}
-              />
-              <label className="text-sm text-zinc-300">Sort</label>
-              <select className="anime-input max-w-56" value={sortOption} onChange={(event) => setSortOption(event.target.value as SortOption)}>
-                <option value="mm_ready">MM Ready (default)</option>
-                <option value="mm_not_ready">MM Not Ready first</option>
-                <option value="newest">Newest first</option>
-                <option value="oldest">Oldest first</option>
-                <option value="username_asc">Username A-Z</option>
-                <option value="username_desc">Username Z-A</option>
-              </select>
-              <button className="anime-secondary-button px-4 py-2" onClick={() => loadAccounts()}>
-                Refresh
-              </button>
-              <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-sm text-zinc-100">
-                <input type="checkbox" checked={showPublicAccounts} onChange={(event) => handlePublicToggle(event.target.checked)} />
-                Show public accounts
-              </label>
-              <label className="relative flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/90 px-3 py-2 pr-7 text-sm text-zinc-100">
+            <div className="anime-panel space-y-4 rounded-3xl p-4">
+              <div className="grid gap-3 xl:grid-cols-[1.2fr_180px_220px_auto_auto]">
                 <input
-                  type="checkbox"
-                  checked={showOnlyPendingReviews}
-                  onChange={(event) => setShowOnlyPendingReviews(event.target.checked)}
+                  className="anime-input"
+                  placeholder="Search username"
+                  value={usernameSearch}
+                  onChange={(event) => setUsernameSearch(event.target.value)}
                 />
-                Only pending reviews
-                {ownPendingReviewCount > 0 && (
-                  <span className={`absolute -right-1.5 -top-1.5 inline-flex min-h-4 min-w-4 items-center justify-center rounded-full border border-sky-200/70 bg-sky-400 px-1 text-[10px] font-semibold leading-none text-zinc-950 shadow-[0_0_10px_rgba(56,189,248,0.7)] ${hasNewPendingReviewsPulse ? "animate-pulse" : ""}`}>
-                    {ownPendingReviewCount}
-                  </span>
-                )}
-              </label>
-              <button className="ml-auto rounded-xl border border-rose-300/40 bg-rose-500/10 px-4 py-2 text-rose-200 hover:bg-rose-500/20" onClick={handleLogout}>
-                Logout
-              </button>
+                <select className="anime-input" value={banFilter} onChange={(event) => handleFilterChange(event.target.value as "all" | BanType)}>
+                  <option value="all">All bans</option>
+                  <option value="None">Not banned</option>
+                  <option value="VAC">VAC</option>
+                  <option value="GameBanned">Game Banned</option>
+                  <option value="VACLive">VAC Live</option>
+                </select>
+                <select className="anime-input" value={sortOption} onChange={(event) => setSortOption(event.target.value as SortOption)}>
+                  <option value="mm_ready">MM Ready (default)</option>
+                  <option value="mm_not_ready">MM Not Ready first</option>
+                  <option value="newest">Newest first</option>
+                  <option value="oldest">Oldest first</option>
+                  <option value="username_asc">Username A-Z</option>
+                  <option value="username_desc">Username Z-A</option>
+                </select>
+                <button className="anime-secondary-button px-4 py-2" onClick={() => loadAccounts()}>
+                  Refresh
+                </button>
+                <button className="rounded-xl border border-rose-300/40 bg-rose-500/10 px-4 py-2 text-rose-200 hover:bg-rose-500/20" onClick={handleLogout}>
+                  Logout
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-2">
+                {modeOptions.map((mode) => (
+                  <button
+                    key={mode.id}
+                    type="button"
+                    className={`rounded-lg border px-3 py-1.5 text-xs transition ${
+                      viewMode === mode.id
+                        ? "border-fuchsia-300/60 bg-fuchsia-500/20 text-fuchsia-100"
+                        : "border-zinc-600/70 bg-zinc-800/70 text-zinc-200 hover:bg-zinc-700/80"
+                    }`}
+                    onClick={() => setViewMode(mode.id)}
+                  >
+                    {mode.label}
+                  </button>
+                ))}
+                <label className="ml-auto flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900/80 px-3 py-1.5 text-xs text-zinc-100">
+                  <input type="checkbox" checked={showPublicAccounts} onChange={(event) => handlePublicToggle(event.target.checked)} />
+                  Show public
+                </label>
+                <label className="relative flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900/80 px-3 py-1.5 pr-7 text-xs text-zinc-100">
+                  <input type="checkbox" checked={showOnlyPendingReviews} onChange={(event) => setShowOnlyPendingReviews(event.target.checked)} />
+                  Pending review
+                  {ownPendingReviewCount > 0 && (
+                    <span className={`absolute -right-1.5 -top-1.5 inline-flex min-h-4 min-w-4 items-center justify-center rounded-full border border-sky-200/70 bg-sky-400 px-1 text-[10px] font-semibold leading-none text-zinc-950 shadow-[0_0_10px_rgba(56,189,248,0.7)] ${hasNewPendingReviewsPulse ? "animate-pulse" : ""}`}>
+                      {ownPendingReviewCount}
+                    </span>
+                  )}
+                </label>
+              </div>
             </div>
 
             {editingAccountId && (
@@ -1098,157 +1213,232 @@ function App() {
               </form>
             )}
 
-            <div className="anime-panel overflow-x-auto rounded-3xl">
-              <table className="min-w-[1360px] w-full divide-y divide-zinc-700/60 text-[12px]">
-                <thead className="bg-zinc-900/70">
-                  <tr>
-                    <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">
-                      <input
-                        type="checkbox"
-                        checked={allOwnOnPageSelected}
-                        disabled={ownPaginatedAccounts.length === 0}
-                        onChange={toggleSelectAllOnPage}
-                      />
-                    </th>
-                    <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Avatar</th>
-                    <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Username</th>
-                    <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Email</th>
-                    <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Steam ID64</th>
-                    <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Password</th>
-                    <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Ban Type</th>
-                    <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Status</th>
-                    <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">VAC Live Left</th>
-                    <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">MM Ready</th>
-                    <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Visibility</th>
-                    <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Review</th>
-                    <th className="px-3 py-2 pr-3 text-left text-[11px] uppercase tracking-wider text-zinc-300">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-700/50">
-                  {paginatedAccounts.map((account) => (
-                    <tr key={account.id} className={getRowClassName(account)}>
-                      <td className="px-3 py-2">
-                        {currentUserId === account.owner_id ? (
-                          <input
-                            type="checkbox"
-                            checked={selectedAccountIds.has(account.id)}
-                            onChange={() => toggleAccountSelection(account.id)}
-                          />
-                        ) : (
-                          <span className="text-xs text-zinc-500">-</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        <div className="group relative inline-flex">
-                          {account.avatar_url ? (
-                            <img
-                              src={account.avatar_url}
-                              alt="Avatar"
-                              aria-label={getAvatarHoverTitle(account)}
-                              className={`h-9 w-9 rounded-full border ${getAvatarBorderClass(account)}`}
+            {viewMode === "table" && (
+              <div className="anime-panel overflow-x-auto rounded-3xl">
+                <table className="min-w-[1360px] w-full divide-y divide-zinc-700/60 text-[12px]">
+                  <thead className="bg-zinc-900/70">
+                    <tr>
+                      <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">
+                        <input
+                          type="checkbox"
+                          checked={allOwnOnPageSelected}
+                          disabled={ownPaginatedAccounts.length === 0}
+                          onChange={toggleSelectAllOnPage}
+                        />
+                      </th>
+                      <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Avatar</th>
+                      <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Username</th>
+                      <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Email</th>
+                      <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Steam ID64</th>
+                      <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Password</th>
+                      <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Ban Type</th>
+                      <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Status</th>
+                      <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">VAC Live Left</th>
+                      <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">MM Ready</th>
+                      <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Visibility</th>
+                      <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Review</th>
+                      <th className="px-3 py-2 pr-3 text-left text-[11px] uppercase tracking-wider text-zinc-300">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-700/50">
+                    {paginatedAccounts.map((account) => (
+                      <tr key={account.id} className={getRowClassName(account)}>
+                        <td className="px-3 py-2">
+                          {currentUserId === account.owner_id ? (
+                            <input
+                              type="checkbox"
+                              checked={selectedAccountIds.has(account.id)}
+                              onChange={() => toggleAccountSelection(account.id)}
                             />
                           ) : (
-                            <div
-                              aria-label={getAvatarHoverTitle(account)}
-                              className={`h-9 w-9 rounded-full border ${getAvatarBorderClass(account)} bg-zinc-700`}
-                            />
+                            <span className="text-xs text-zinc-500">-</span>
                           )}
-                          <div className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 max-w-[240px] -translate-x-1/2 overflow-hidden text-ellipsis whitespace-nowrap rounded-lg border border-zinc-700 bg-zinc-950/95 px-2 py-1 text-xs text-zinc-100 opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100">
-                            {getAvatarHoverTitle(account)}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-3 py-2">
-                        <button
-                          type="button"
-                          className="block max-w-[150px] cursor-copy truncate text-left hover:text-fuchsia-200"
-                          title="Click to copy username"
-                          onClick={() => copyAccountField(account.username)}
-                        >
-                          {account.username}
-                        </button>
-                      </td>
-                      <td className="px-3 py-2">
-                        <button
-                          type="button"
-                          className="block max-w-[200px] cursor-copy truncate text-left hover:text-fuchsia-200"
-                          title="Click to copy email"
-                          onClick={() => copyAccountField(account.email)}
-                        >
-                          {account.email}
-                        </button>
-                      </td>
-                      <td className="px-3 py-2">
-                        <button
-                          type="button"
-                          className="block max-w-[170px] cursor-copy truncate text-left hover:text-fuchsia-200"
-                          title="Click to copy Steam ID64"
-                          onClick={() => copyAccountField(account.steam_id64 ?? "")}
-                        >
-                          {account.steam_id64 ?? "-"}
-                        </button>
-                      </td>
-                      <td className="px-3 py-2">
-                        <button
-                          type="button"
-                          className="group cursor-copy text-left"
-                          title="Hover to reveal, click to copy password"
-                          onClick={() => copyAccountField(account.password)}
-                        >
-                          <span className="inline-block blur-sm transition group-hover:blur-0">{account.password}</span>
-                        </button>
-                      </td>
-                      <td className="px-3 py-2">{account.ban_type}</td>
-                      <td className="px-3 py-2">{getDisplayStatus(account)}</td>
-                      <td className="px-3 py-2">{account.ban_type === "VACLive" ? account.vac_live_remaining ?? "Expired" : "-"}</td>
-                      <td className="px-3 py-2">{account.matchmaking_ready ? "Yes" : "No"}</td>
-                      <td className="px-3 py-2">{account.is_public ? "Public" : "Private"}</td>
-                      <td className="px-3 py-2">
-                        {currentUserId === account.owner_id && (account.pending_review_count ?? 0) > 0 ? (
-                          <span className="inline-block h-2.5 w-2.5 rounded-full bg-sky-400 shadow-[0_0_10px_rgba(56,189,248,0.7)]" />
-                        ) : null}
-                      </td>
-                      <td className="px-3 py-2 pr-3">
-                        {currentUserId === account.owner_id ? (
-                          <div className="flex gap-1.5">
-                            <button
-                              type="button"
-                              className="inline-flex items-center rounded-lg border border-sky-300/40 bg-sky-500/10 px-2 py-1 text-[11px] text-sky-100 hover:bg-sky-500/20"
-                              title={reviewButtonHints[account.id] ?? ((account.pending_review_count ?? 0) > 0 ? `Pending suggestions: ${account.pending_review_count}` : "No pending suggestions")}
-                              onMouseEnter={() => {
-                                void prefetchReviewHint(account);
-                              }}
-                              onClick={() => openReviewModal(account)}
-                            >
-                              Review
-                              {(account.pending_review_count ?? 0) > 0 && (
-                                <span className={`ml-1 inline-flex min-h-4 min-w-4 items-center justify-center rounded-full border border-sky-200/70 bg-sky-400 px-1 text-[10px] font-semibold leading-none text-zinc-950 shadow-[0_0_10px_rgba(56,189,248,0.7)] ${hasNewPendingReviewsPulse ? "animate-pulse" : ""}`}>
-                                  {account.pending_review_count}
-                                </span>
-                              )}
-                            </button>
-                            <button type="button" className="anime-secondary-button px-2 py-1 text-xs" onClick={() => startEditAccount(account)}>
-                              Edit
-                            </button>
-                            <button type="button" className="rounded-lg border border-rose-400/40 px-2 py-1 text-xs text-rose-200 hover:bg-rose-500/20" onClick={() => handleDeleteAccount(account.id)}>
-                              Delete
-                            </button>
-                          </div>
-                        ) : (
+                        </td>
+                        <td className="px-3 py-2">{renderAccountAvatar(account)}</td>
+                        <td className="px-3 py-2">
                           <button
                             type="button"
-                            className="rounded-lg border border-fuchsia-300/40 bg-fuchsia-500/10 px-2 py-1 text-xs text-fuchsia-100 hover:bg-fuchsia-500/20"
-                            onClick={() => openSuggestModal(account)}
+                            className="block max-w-[150px] cursor-copy truncate text-left hover:text-fuchsia-200"
+                            title="Click to copy username"
+                            onClick={() => copyAccountField(account.username)}
                           >
-                            Suggest
+                            {account.username}
                           </button>
-                        )}
-                      </td>
-                    </tr>
+                        </td>
+                        <td className="px-3 py-2">
+                          <button
+                            type="button"
+                            className="block max-w-[200px] cursor-copy truncate text-left hover:text-fuchsia-200"
+                            title="Click to copy email"
+                            onClick={() => copyAccountField(account.email)}
+                          >
+                            {account.email}
+                          </button>
+                        </td>
+                        <td className="px-3 py-2">
+                          <button
+                            type="button"
+                            className="block max-w-[170px] cursor-copy truncate text-left hover:text-fuchsia-200"
+                            title="Click to copy Steam ID64"
+                            onClick={() => copyAccountField(account.steam_id64 ?? "")}
+                          >
+                            {account.steam_id64 ?? "-"}
+                          </button>
+                        </td>
+                        <td className="px-3 py-2">
+                          <button
+                            type="button"
+                            className="group cursor-copy text-left"
+                            title="Hover to reveal, click to copy password"
+                            onClick={() => copyAccountField(account.password)}
+                          >
+                            <span className="inline-block blur-sm transition group-hover:blur-0">{account.password}</span>
+                          </button>
+                        </td>
+                        <td className="px-3 py-2">{account.ban_type}</td>
+                        <td className="px-3 py-2">{getDisplayStatus(account)}</td>
+                        <td className="px-3 py-2">{account.ban_type === "VACLive" ? account.vac_live_remaining ?? "Expired" : "-"}</td>
+                        <td className="px-3 py-2">{account.matchmaking_ready ? "Yes" : "No"}</td>
+                        <td className="px-3 py-2">{account.is_public ? "Public" : "Private"}</td>
+                        <td className="px-3 py-2">
+                          {currentUserId === account.owner_id && (account.pending_review_count ?? 0) > 0 ? (
+                            <span className="inline-block h-2.5 w-2.5 rounded-full bg-sky-400 shadow-[0_0_10px_rgba(56,189,248,0.7)]" />
+                          ) : null}
+                        </td>
+                        <td className="px-3 py-2 pr-3">{renderAccountActions(account)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {viewMode === "cards" && (
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {paginatedAccounts.map((account) => (
+                  <article key={account.id} className="anime-panel space-y-3 rounded-3xl p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        {renderAccountAvatar(account, "h-12 w-12")}
+                        <div>
+                          <button type="button" className="font-medium text-zinc-100 hover:text-fuchsia-200" onClick={() => copyAccountField(account.username)}>
+                            {account.username}
+                          </button>
+                          <p className="text-xs text-zinc-400">{account.email}</p>
+                        </div>
+                      </div>
+                      {currentUserId === account.owner_id && (
+                        <input type="checkbox" checked={selectedAccountIds.has(account.id)} onChange={() => toggleAccountSelection(account.id)} />
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs text-zinc-300">
+                      <p>Ban: <span className="text-zinc-100">{account.ban_type}</span></p>
+                      <p>Status: <span className="text-zinc-100">{getDisplayStatus(account)}</span></p>
+                      <p>MM Ready: <span className="text-zinc-100">{account.matchmaking_ready ? "Yes" : "No"}</span></p>
+                      <p>Visibility: <span className="text-zinc-100">{account.is_public ? "Public" : "Private"}</span></p>
+                      <p className="col-span-2">Steam ID: <span className="text-zinc-100">{account.steam_id64 ?? "-"}</span></p>
+                    </div>
+                    <div>{renderAccountActions(account, true)}</div>
+                  </article>
+                ))}
+              </div>
+            )}
+
+            {viewMode === "compact" && (
+              <div className="anime-panel rounded-3xl p-2">
+                <div className="space-y-1">
+                  {paginatedAccounts.map((account) => (
+                    <div key={account.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-zinc-700/60 bg-zinc-900/40 px-3 py-2 text-xs">
+                      {currentUserId === account.owner_id ? (
+                        <input type="checkbox" checked={selectedAccountIds.has(account.id)} onChange={() => toggleAccountSelection(account.id)} />
+                      ) : (
+                        <span className="text-zinc-600">-</span>
+                      )}
+                      {renderAccountAvatar(account, "h-7 w-7")}
+                      <button type="button" className="font-medium text-zinc-100 hover:text-fuchsia-200" onClick={() => copyAccountField(account.username)}>{account.username}</button>
+                      <span className="text-zinc-400">{account.ban_type}</span>
+                      <span className="text-zinc-400">{account.matchmaking_ready ? "MM Ready" : "MM Off"}</span>
+                      <span className="text-zinc-400">{account.is_public ? "Public" : "Private"}</span>
+                      {(account.pending_review_count ?? 0) > 0 && <span className="rounded-full bg-sky-400 px-2 py-0.5 text-[10px] font-semibold text-zinc-950">{account.pending_review_count}</span>}
+                      <div className="ml-auto">{renderAccountActions(account, true)}</div>
+                    </div>
                   ))}
-                </tbody>
-              </table>
-            </div>
+                </div>
+              </div>
+            )}
+
+            {viewMode === "kanban" && (
+              <div className="grid gap-3 xl:grid-cols-3">
+                <section className="anime-panel rounded-3xl p-3">
+                  <h3 className="mb-3 text-sm font-semibold text-emerald-200">Clean ({kanbanColumns.clean.length})</h3>
+                  <div className="space-y-2">
+                    {kanbanColumns.clean.map((account) => (
+                      <div key={account.id} className="rounded-xl border border-zinc-700/60 bg-zinc-900/50 p-3 text-xs">
+                        <div className="mb-2 flex items-center gap-2">{renderAccountAvatar(account, "h-7 w-7")}<span className="font-medium">{account.username}</span></div>
+                        <p className="text-zinc-400">{account.matchmaking_ready ? "MM Ready" : "MM Off"} · {account.is_public ? "Public" : "Private"}</p>
+                        <div className="mt-2">{renderAccountActions(account, true)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+                <section className="anime-panel rounded-3xl p-3">
+                  <h3 className="mb-3 text-sm font-semibold text-rose-200">Banned ({kanbanColumns.banned.length})</h3>
+                  <div className="space-y-2">
+                    {kanbanColumns.banned.map((account) => (
+                      <div key={account.id} className="rounded-xl border border-zinc-700/60 bg-zinc-900/50 p-3 text-xs">
+                        <div className="mb-2 flex items-center gap-2">{renderAccountAvatar(account, "h-7 w-7")}<span className="font-medium">{account.username}</span></div>
+                        <p className="text-zinc-400">{account.ban_type} · {getDisplayStatus(account)}</p>
+                        <div className="mt-2">{renderAccountActions(account, true)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+                <section className="anime-panel rounded-3xl p-3">
+                  <h3 className="mb-3 text-sm font-semibold text-fuchsia-200">VAC Live ({kanbanColumns.vacLive.length})</h3>
+                  <div className="space-y-2">
+                    {kanbanColumns.vacLive.map((account) => (
+                      <div key={account.id} className="rounded-xl border border-zinc-700/60 bg-zinc-900/50 p-3 text-xs">
+                        <div className="mb-2 flex items-center gap-2">{renderAccountAvatar(account, "h-7 w-7")}<span className="font-medium">{account.username}</span></div>
+                        <p className="text-zinc-400">Remaining: {account.vac_live_remaining ?? "Expired"}</p>
+                        <div className="mt-2">{renderAccountActions(account, true)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              </div>
+            )}
+
+            {viewMode === "gallery" && (
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+                {paginatedAccounts.map((account) => (
+                  <article key={account.id} className="anime-panel rounded-3xl p-4 text-center">
+                    <div className="mx-auto mb-3 flex justify-center">{renderAccountAvatar(account, "h-16 w-16")}</div>
+                    <button type="button" className="mx-auto block max-w-full truncate text-sm font-medium hover:text-fuchsia-200" onClick={() => copyAccountField(account.username)}>
+                      {account.username}
+                    </button>
+                    <p className="mt-1 text-[11px] text-zinc-400">{account.ban_type} · {account.matchmaking_ready ? "MM" : "No MM"}</p>
+                    <div className="mt-3 flex justify-center">{renderAccountActions(account, true)}</div>
+                  </article>
+                ))}
+              </div>
+            )}
+
+            {viewMode === "stats" && (
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="anime-panel rounded-3xl p-4"><p className="text-xs text-zinc-400">Total</p><p className="mt-2 text-3xl font-semibold text-zinc-100">{accountStats.total}</p></div>
+                <div className="anime-panel rounded-3xl p-4"><p className="text-xs text-zinc-400">Matchmaking Ready</p><p className="mt-2 text-3xl font-semibold text-emerald-200">{accountStats.mmReady}</p></div>
+                <div className="anime-panel rounded-3xl p-4"><p className="text-xs text-zinc-400">Public</p><p className="mt-2 text-3xl font-semibold text-sky-200">{accountStats.publicCount}</p></div>
+                <div className="anime-panel rounded-3xl p-4"><p className="text-xs text-zinc-400">Pending Reviews</p><p className="mt-2 text-3xl font-semibold text-fuchsia-200">{accountStats.pendingReviews}</p></div>
+                <div className="anime-panel rounded-3xl p-4"><p className="text-xs text-zinc-400">Clean</p><p className="mt-2 text-2xl font-semibold text-emerald-200">{accountStats.clean}</p></div>
+                <div className="anime-panel rounded-3xl p-4"><p className="text-xs text-zinc-400">VAC/Game Banned</p><p className="mt-2 text-2xl font-semibold text-rose-200">{accountStats.banned}</p></div>
+                <div className="anime-panel rounded-3xl p-4"><p className="text-xs text-zinc-400">VAC Live</p><p className="mt-2 text-2xl font-semibold text-fuchsia-200">{accountStats.vacLive}</p></div>
+                <div className="anime-panel rounded-3xl p-4">
+                  <p className="text-xs text-zinc-400">Current View Range</p>
+                  <p className="mt-2 text-sm text-zinc-200">Page {currentPage} of {totalPages}</p>
+                  <p className="mt-1 text-xs text-zinc-400">based on active filters/search</p>
+                </div>
+              </div>
+            )}
 
             <div className="anime-panel flex flex-wrap items-center justify-between gap-3 rounded-3xl p-4 text-sm">
               <p className="text-zinc-300">Bulk actions &amp; export for your accounts.</p>
