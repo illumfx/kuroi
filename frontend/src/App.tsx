@@ -76,6 +76,15 @@ type SortOption = "mm_ready" | "mm_not_ready" | "newest" | "oldest" | "username_
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 const oidcEnabledFromEnv = (import.meta.env.VITE_OIDC_ENABLED ?? "false") === "true";
 
+class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 async function apiFetch<T>(path: string, token: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init,
@@ -88,7 +97,7 @@ async function apiFetch<T>(path: string, token: string, init?: RequestInit): Pro
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail ?? "Request failed");
+    throw new ApiError(error.detail ?? "Request failed", response.status);
   }
 
   return response.json() as Promise<T>;
@@ -106,6 +115,7 @@ function App() {
   const [showOnlyPendingReviews, setShowOnlyPendingReviews] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [error, setError] = useState("");
+  const [sessionNotice, setSessionNotice] = useState("");
   const [oidcVisible, setOidcVisible] = useState(oidcEnabledFromEnv);
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
 
@@ -142,6 +152,17 @@ function App() {
   const [hasNewPendingReviewsPulse, setHasNewPendingReviewsPulse] = useState(false);
   const lastOwnPendingReviewCountRef = useRef(0);
   const pendingPulseTimeoutRef = useRef<number | null>(null);
+
+  const clearSession = (message?: string) => {
+    setToken("");
+    setAccounts([]);
+    setGeneratedApiKey("");
+    setSelectedAccountIds(new Set());
+    setCurrentUserId(null);
+    setError("");
+    setSessionNotice(message ?? "");
+    localStorage.removeItem("kuroi_token");
+  };
 
   const [multiEditOpen, setMultiEditOpen] = useState(false);
   const [multiEdit, setMultiEdit] = useState<{
@@ -345,9 +366,17 @@ function App() {
       params.set("include_public", "true");
     }
     const query = params.toString() ? `?${params.toString()}` : "";
-    const data = await apiFetch<Account[]>(`/accounts${query}`, token);
-    setAccounts(data);
-    setCurrentPage(1);
+    try {
+      const data = await apiFetch<Account[]>(`/accounts${query}`, token);
+      setAccounts(data);
+      setCurrentPage(1);
+    } catch (requestError) {
+      if (requestError instanceof ApiError && requestError.status === 401) {
+        clearSession("Session expired. Please log in again.");
+        return;
+      }
+      setError(requestError instanceof Error ? requestError.message : "Could not load accounts");
+    }
   };
 
   useEffect(() => {
@@ -394,7 +423,11 @@ function App() {
       try {
         const me = await apiFetch<UserProfile>("/auth/me", token);
         setCurrentUserId(me.id);
-      } catch {
+      } catch (requestError) {
+        if (requestError instanceof ApiError && requestError.status === 401) {
+          clearSession("Session expired. Please log in again.");
+          return;
+        }
         setCurrentUserId(null);
       }
     };
@@ -405,6 +438,7 @@ function App() {
   const handleLocalLogin = async (event: FormEvent) => {
     event.preventDefault();
     setError("");
+    setSessionNotice("");
 
     try {
       const response = await fetch(`${apiBaseUrl}/auth/local-login`, {
@@ -426,6 +460,7 @@ function App() {
 
   const handleOidcLogin = async () => {
     setError("");
+    setSessionNotice("");
     try {
       const response = await fetch(`${apiBaseUrl}/auth/oidc/login`);
       const data = await response.json();
@@ -789,11 +824,7 @@ function App() {
   };
 
   const handleLogout = () => {
-    setToken("");
-    setAccounts([]);
-    setGeneratedApiKey("");
-    setSelectedAccountIds(new Set());
-    localStorage.removeItem("kuroi_token");
+    clearSession();
   };
 
   const escapeCsvValue = (value: string | number | boolean | null | undefined) => {
@@ -939,6 +970,18 @@ function App() {
 
         {!isLoggedIn ? (
           <div className="anime-panel rounded-3xl p-6">
+            {sessionNotice && (
+              <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-amber-300/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                <span>{sessionNotice}</span>
+                <button
+                  type="button"
+                  className="rounded-md border border-amber-200/40 px-2 py-1 text-xs text-amber-100 hover:bg-amber-500/20"
+                  onClick={() => setSessionNotice("")}
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
             <form onSubmit={handleLocalLogin} className="grid gap-4 md:grid-cols-3">
               <input className="anime-input" placeholder="Username" value={username} onChange={(event) => setUsername(event.target.value)} />
               <input type="password" className="anime-input" placeholder="Password" value={password} onChange={(event) => setPassword(event.target.value)} />
