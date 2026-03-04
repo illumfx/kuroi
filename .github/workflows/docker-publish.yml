@@ -41,18 +41,28 @@ jobs:
 
       - name: Extract beta metadata
         id: meta-beta
+        if: startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref_name, '-beta')
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ steps.owner.outputs.owner }}/kuroi-app
+          tags: |
+            type=ref,event=tag
+            type=raw,value=beta-latest
+
+      - name: Extract alpha metadata
+        id: meta-alpha
         if: github.ref == 'refs/heads/main'
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ steps.owner.outputs.owner }}/kuroi-app
           tags: |
-            type=raw,value=beta
-            type=raw,value=beta-latest
-            type=sha,format=short,prefix=beta-
+            type=raw,value=alpha
+            type=raw,value=alpha-latest
+            type=sha,format=short,prefix=alpha-
 
       - name: Extract stable metadata
         id: meta-stable
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && !endsWith(github.ref_name, '-beta')
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ steps.owner.outputs.owner }}/kuroi-app
@@ -61,7 +71,7 @@ jobs:
             type=raw,value=latest
 
       - name: Build and push beta image
-        if: github.ref == 'refs/heads/main'
+        if: startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref_name, '-beta')
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -76,8 +86,24 @@ jobs:
             VITE_API_BASE_URL=
             VITE_OIDC_ENABLED=true
 
+      - name: Build and push alpha image
+        if: github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta-alpha.outputs.tags }}
+          labels: ${{ steps.meta-alpha.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VITE_API_BASE_URL=
+            VITE_OIDC_ENABLED=true
+
       - name: Build and push stable image
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && !endsWith(github.ref_name, '-beta')
         uses: docker/build-push-action@v6
         with:
           context: .
