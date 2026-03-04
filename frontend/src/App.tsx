@@ -1,5 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import kuroiLogo from "./assets/kuroi-logo.svg";
+import HomePage from "./pages/HomePage";
+import ProfilePage from "./pages/ProfilePage";
 
 type BanType = "None" | "VAC" | "GameBanned" | "VACLive";
 
@@ -30,11 +32,15 @@ type UserProfile = {
   id: number;
   username: string;
   email?: string | null;
+  has_password?: boolean;
 };
+
+type AppPage = "home" | "profile";
 
 type AuthConfig = {
   oidc_enabled: boolean;
   oidc_configured: boolean;
+  allow_invite_link_creation: boolean;
 };
 
 type ApiKeyResponse = {
@@ -43,6 +49,16 @@ type ApiKeyResponse = {
   api_key: string;
   key_prefix: string;
   created_at: string;
+};
+
+type InviteCreateResponse = {
+  code: string;
+  expires_at?: string | null;
+  link?: string | null;
+};
+
+type ChangePasswordResponse = {
+  status: string;
 };
 
 type MassImportError = {
@@ -82,6 +98,8 @@ const isViewMode = (value: string | null): value is ViewMode =>
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 const oidcEnabledFromEnv = (import.meta.env.VITE_OIDC_ENABLED ?? "false") === "true";
 
+const resolveAppPage = (pathname: string): AppPage => (pathname === "/profile" ? "profile" : "home");
+
 class ApiError extends Error {
   status: number;
 
@@ -113,6 +131,7 @@ function App() {
   const ACCOUNTS_PER_PAGE = 10;
   const LIVE_REFRESH_INTERVAL_MS = 5000;
   const [token, setToken] = useState(localStorage.getItem("kuroi_token") ?? "");
+  const [currentPageRoute, setCurrentPageRoute] = useState<AppPage>(() => resolveAppPage(window.location.pathname));
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [banFilter, setBanFilter] = useState<"all" | BanType>("all");
@@ -130,8 +149,12 @@ function App() {
   const [sessionNotice, setSessionNotice] = useState("");
   const [oidcVisible, setOidcVisible] = useState(oidcEnabledFromEnv);
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
+  const [currentUsername, setCurrentUsername] = useState("");
+  const [currentEmail, setCurrentEmail] = useState("");
+  const [canChangePassword, setCanChangePassword] = useState(false);
 
   const [generatedApiKey, setGeneratedApiKey] = useState("");
+  const [generatedInviteLink, setGeneratedInviteLink] = useState("");
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
   const [editingAccountId, setEditingAccountId] = useState<number | null>(null);
   const [suggestAccount, setSuggestAccount] = useState<Account | null>(null);
@@ -161,6 +184,7 @@ function App() {
   const [massImportResult, setMassImportResult] = useState<MassImportResponse | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [showManagementTools, setShowManagementTools] = useState(false);
+  const [allowInviteLinkCreation, setAllowInviteLinkCreation] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<number>>(new Set());
   const [hasNewPendingReviewsPulse, setHasNewPendingReviewsPulse] = useState(false);
@@ -179,14 +203,29 @@ function App() {
     }, 2500);
   };
 
+  const navigateToPage = (page: AppPage) => {
+    const targetPath = page === "profile" ? "/profile" : "/";
+    if (window.location.pathname !== targetPath) {
+      window.history.pushState(null, "", targetPath);
+    }
+    setCurrentPageRoute(page);
+  };
+
   const clearSession = (message?: string) => {
     setToken("");
     setAccounts([]);
     setGeneratedApiKey("");
+    setGeneratedInviteLink("");
     setSelectedAccountIds(new Set());
     setCurrentUserId(null);
+    setCurrentUsername("");
+    setCurrentEmail("");
+    setCanChangePassword(false);
+    setCurrentPasswordInput("");
+    setNewPasswordInput("");
     setError("");
     setSessionNotice(message ?? "");
+    setCurrentPageRoute("home");
     localStorage.removeItem("kuroi_token");
   };
 
@@ -234,6 +273,14 @@ function App() {
     matchmaking_ready: false,
     is_public: false,
   });
+
+  const [registerUsername, setRegisterUsername] = useState("");
+  const [registerEmail, setRegisterEmail] = useState("");
+  const [registerPassword, setRegisterPassword] = useState("");
+  const [registerInviteCode, setRegisterInviteCode] = useState("");
+  const [currentPasswordInput, setCurrentPasswordInput] = useState("");
+  const [newPasswordInput, setNewPasswordInput] = useState("");
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
 
   const isLoggedIn = useMemo(() => token.length > 0, [token]);
   const filteredAccounts = useMemo(() => {
@@ -374,6 +421,23 @@ function App() {
     ownPaginatedAccounts.length > 0 && ownPaginatedAccounts.every((account) => selectedAccountIds.has(account.id));
 
   useEffect(() => {
+    const handlePopState = () => {
+      setCurrentPageRoute(resolveAppPage(window.location.pathname));
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isLoggedIn && currentPageRoute !== "home") {
+      navigateToPage("home");
+    }
+  }, [isLoggedIn, currentPageRoute]);
+
+  useEffect(() => {
     const hash = window.location.hash.replace(/^#/, "");
     if (!hash) {
       return;
@@ -398,6 +462,21 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const inviteFromUrl = params.get("invite");
+    if (!inviteFromUrl) {
+      return;
+    }
+
+    setRegisterInviteCode(inviteFromUrl);
+    setSessionNotice("Invite code was loaded from the invite link.");
+    params.delete("invite");
+    const newSearch = params.toString();
+    const targetUrl = `${window.location.pathname}${newSearch ? `?${newSearch}` : ""}${window.location.hash}`;
+    window.history.replaceState(null, "", targetUrl);
+  }, []);
+
+  useEffect(() => {
     const loadAuthConfig = async () => {
       try {
         const response = await fetch(`${apiBaseUrl}/auth/config`);
@@ -406,8 +485,10 @@ function App() {
         }
         const config = (await response.json()) as AuthConfig;
         setOidcVisible(config.oidc_enabled);
+        setAllowInviteLinkCreation(config.allow_invite_link_creation);
       } catch {
         setOidcVisible(oidcEnabledFromEnv);
+        setAllowInviteLinkCreation(false);
       }
     };
 
@@ -486,12 +567,18 @@ function App() {
       try {
         const me = await apiFetch<UserProfile>("/auth/me", token);
         setCurrentUserId(me.id);
+        setCurrentUsername(me.username);
+        setCurrentEmail(me.email ?? "");
+        setCanChangePassword(Boolean(me.has_password));
       } catch (requestError) {
         if (requestError instanceof ApiError && requestError.status === 401) {
           clearSession("Session expired. Please log in again.");
           return;
         }
         setCurrentUserId(null);
+        setCurrentUsername("");
+        setCurrentEmail("");
+        setCanChangePassword(false);
       }
     };
 
@@ -589,6 +676,39 @@ function App() {
     }
   };
 
+  const handleRegister = async (event: FormEvent) => {
+    event.preventDefault();
+    setError("");
+    setSessionNotice("");
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: registerUsername,
+          email: registerEmail,
+          password: registerPassword,
+          invite_code: registerInviteCode,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail ?? "Registration failed");
+      }
+
+      setToken(data.access_token);
+      localStorage.setItem("kuroi_token", data.access_token);
+      setRegisterUsername("");
+      setRegisterEmail("");
+      setRegisterPassword("");
+      setRegisterInviteCode("");
+      await loadAccounts();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unexpected registration error");
+    }
+  };
+
   const handleCreateAccount = async (event: FormEvent) => {
     event.preventDefault();
     setError("");
@@ -653,6 +773,51 @@ function App() {
       setGeneratedApiKey(response.api_key);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unexpected API key error");
+    }
+  };
+
+  const handleCreateInviteLink = async () => {
+    setError("");
+
+    try {
+      const response = await apiFetch<InviteCreateResponse>("/auth/invite", token, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      const fallbackLink = `${window.location.origin}/?invite=${encodeURIComponent(response.code)}`;
+      setGeneratedInviteLink(response.link ?? fallbackLink);
+      showUiNotice("Invite link created");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unexpected invite link error");
+    }
+  };
+
+  const handleChangePassword = async (event: FormEvent) => {
+    event.preventDefault();
+    setError("");
+    setSessionNotice("");
+
+    if (!canChangePassword) {
+      setError("Password change is only available for local accounts.");
+      return;
+    }
+
+    setIsChangingPassword(true);
+    try {
+      await apiFetch<ChangePasswordResponse>("/auth/change-password", token, {
+        method: "POST",
+        body: JSON.stringify({
+          current_password: currentPasswordInput,
+          new_password: newPasswordInput,
+        }),
+      });
+      setCurrentPasswordInput("");
+      setNewPasswordInput("");
+      showUiNotice("Password updated");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unexpected password change error");
+    } finally {
+      setIsChangingPassword(false);
     }
   };
 
@@ -1252,9 +1417,18 @@ function App() {
               </div>
             </div>
             {isLoggedIn && (
-              <button type="button" className="rounded-xl border border-rose-300/40 bg-rose-500/10 px-4 py-2 text-rose-200 hover:bg-rose-500/20" onClick={handleLogout}>
-                Logout
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="rounded-xl border border-sky-300/40 bg-sky-500/10 px-4 py-2 text-sky-100 hover:bg-sky-500/20"
+                  onClick={() => navigateToPage(currentPageRoute === "profile" ? "home" : "profile")}
+                >
+                  {currentPageRoute === "profile" ? "Accounts" : "Profile"}
+                </button>
+                <button type="button" className="rounded-xl border border-rose-300/40 bg-rose-500/10 px-4 py-2 text-rose-200 hover:bg-rose-500/20" onClick={handleLogout}>
+                  Logout
+                </button>
+              </div>
             )}
           </div>
         </header>
@@ -1279,6 +1453,14 @@ function App() {
               <button className="anime-primary-button">Login with Password</button>
             </form>
 
+            <form onSubmit={handleRegister} className="mt-4 grid gap-4 md:grid-cols-4">
+              <input className="anime-input" placeholder="New username" value={registerUsername} onChange={(event) => setRegisterUsername(event.target.value)} required />
+              <input className="anime-input" placeholder="Email" value={registerEmail} onChange={(event) => setRegisterEmail(event.target.value)} required />
+              <input type="password" className="anime-input" placeholder="New password" value={registerPassword} onChange={(event) => setRegisterPassword(event.target.value)} required />
+              <input className="anime-input" placeholder="Invite code" value={registerInviteCode} onChange={(event) => setRegisterInviteCode(event.target.value)} required />
+              <button className="anime-secondary-button md:col-span-4">Register with Invite</button>
+            </form>
+
             {oidcVisible && (
               <button type="button" className="anime-secondary-button mt-4 w-full" onClick={handleOidcLogin}>
                 Login with OAuth (OIDC)
@@ -1287,6 +1469,20 @@ function App() {
           </div>
         ) : (
           <div className="space-y-6">
+            {currentPageRoute === "profile" ? (
+              <ProfilePage
+                currentUsername={currentUsername}
+                currentEmail={currentEmail}
+                canChangePassword={canChangePassword}
+                currentPasswordInput={currentPasswordInput}
+                newPasswordInput={newPasswordInput}
+                isChangingPassword={isChangingPassword}
+                onCurrentPasswordChange={setCurrentPasswordInput}
+                onNewPasswordChange={setNewPasswordInput}
+                onSubmit={handleChangePassword}
+              />
+            ) : (
+            <HomePage>
             <div className="anime-panel space-y-4 rounded-3xl p-4">
               <div className="grid gap-3 xl:grid-cols-[1.2fr_180px_220px_auto]">
                 <div className="flex items-center gap-2">
@@ -1781,6 +1977,18 @@ function App() {
                     )}
                   </form>
 
+                  {allowInviteLinkCreation && (
+                    <div className="anime-panel rounded-3xl p-4">
+                      <p className="mb-3 text-sm text-zinc-300">Create a one-time invite link for a new user account.</p>
+                      <button type="button" className="anime-primary-button px-4" onClick={handleCreateInviteLink}>
+                        Create Invite Link
+                      </button>
+                      {generatedInviteLink && (
+                        <p className="mt-3 break-all rounded-md bg-zinc-950/80 p-2 font-mono text-emerald-200">{generatedInviteLink}</p>
+                      )}
+                    </div>
+                  )}
+
                   <form onSubmit={handleMassImport} className="anime-panel rounded-3xl p-4 space-y-3">
                     <p className="text-sm text-zinc-300">Mass import format: <span className="font-mono">timestamp: email | username | password | steamid64</span></p>
                     <textarea
@@ -1820,6 +2028,8 @@ function App() {
                 </div>
               )}
             </div>
+            </HomePage>
+            )}
           </div>
         )}
 

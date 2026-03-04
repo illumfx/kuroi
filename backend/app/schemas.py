@@ -12,6 +12,7 @@ class UserOut(BaseModel):
     id: int
     username: str
     email: str | None = None
+    has_password: bool = False
 
     class Config:
         from_attributes = True
@@ -35,6 +36,11 @@ class LocalLoginRequest(BaseModel):
     password: str
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
 class InviteCreateRequest(BaseModel):
     expires_in_hours: int | None = Field(default=None, gt=0, le=168)
 
@@ -42,6 +48,7 @@ class InviteCreateRequest(BaseModel):
 class InviteOut(BaseModel):
     code: str
     expires_at: datetime | None = None
+    link: str | None = None
 
 
 class APIKeyCreateRequest(BaseModel):

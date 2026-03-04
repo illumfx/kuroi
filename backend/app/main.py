@@ -33,6 +33,7 @@ from .schemas import (
     AccountSuggestionResolve,
     APIKeyCreateRequest,
     APIKeyCreateResponse,
+    ChangePasswordRequest,
     InviteCreateRequest,
     InviteOut,
     LocalLoginRequest,
@@ -74,6 +75,7 @@ class Settings(BaseSettings):
     oidc_scope: str = "openid profile email"
     oidc_token_auth_method: str = "auto"
     oidc_use_pkce: bool = True
+    allow_invite_link_creation: bool = False
 
     steam_api_key: str | None = None
     steam_status_refresh_seconds: int = 30
@@ -270,6 +272,15 @@ def get_current_user(
         raise HTTPException(status_code=401, detail="Missing bearer token")
     token = authorization.replace("Bearer ", "", 1).strip()
     return get_current_user_from_token(token, db)
+
+
+def serialize_user(user: User) -> UserOut:
+    return UserOut(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        has_password=bool(user.password_hash),
+    )
 
 
 def get_user_by_api_key(x_api_key: str, db: Session) -> User:
@@ -644,6 +655,47 @@ def ensure_steam_id_unique_for_update(db: Session, *, steam_id: str, exclude_acc
         raise HTTPException(status_code=409, detail="Steam ID already exists")
 
 
+def is_oidc_auth_available() -> bool:
+    return bool(settings.oidc_enabled and settings.oidc_issuer_url and settings.oidc_client_id and settings.oidc_redirect_uri)
+
+
+def build_invite_link(invite_code: str) -> str:
+    frontend_base = settings.frontend_url.rstrip("/")
+    return f"{frontend_base}/?invite={quote(invite_code)}"
+
+
+def ensure_bootstrap_invite_link() -> None:
+    if is_oidc_auth_available():
+        return
+
+    with SessionLocal() as db:
+        user_count = db.scalar(select(func.count(User.id))) or 0
+        if user_count > 0:
+            return
+
+        invite = db.scalar(
+            select(InviteCode)
+            .where(InviteCode.is_active.is_(True), InviteCode.used_by_id.is_(None))
+            .order_by(InviteCode.created_at.asc())
+        )
+        if not invite:
+            invite = InviteCode(code=secrets.token_urlsafe(12), created_by_id=None)
+            db.add(invite)
+            db.commit()
+            db.refresh(invite)
+
+        invite_link = build_invite_link(invite.code)
+        print("=== kuroi bootstrap invite ===")
+        print("OIDC is not configured. Use this invite to create the first account:")
+        print(f"Invite link: {invite_link}")
+        print(f"Invite code: {invite.code}")
+        print("Invite links are currently consumed via URL parameter (?invite=...) and manual registration form.")
+        print("================================")
+
+
+ensure_bootstrap_invite_link()
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -652,7 +704,11 @@ def health() -> dict[str, str]:
 @app.get("/auth/config")
 def auth_config() -> dict[str, bool]:
     oidc_configured = bool(settings.oidc_issuer_url and settings.oidc_client_id and settings.oidc_redirect_uri)
-    return {"oidc_enabled": settings.oidc_enabled, "oidc_configured": oidc_configured}
+    return {
+        "oidc_enabled": settings.oidc_enabled,
+        "oidc_configured": oidc_configured,
+        "allow_invite_link_creation": settings.allow_invite_link_creation,
+    }
 
 
 def _cleanup_oidc_state() -> None:
@@ -844,7 +900,7 @@ def oidc_callback(
         db.refresh(user)
 
     access_token = create_access_token(str(user.id), settings.app_secret, settings.access_token_expire_minutes)
-    token_response = TokenResponse(access_token=access_token, user=UserOut.model_validate(user))
+    token_response = TokenResponse(access_token=access_token, user=serialize_user(user))
     if as_json:
         return token_response
 
@@ -877,7 +933,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     db.refresh(user)
 
     access_token = create_access_token(str(user.id), settings.app_secret, settings.access_token_expire_minutes)
-    return TokenResponse(access_token=access_token, user=UserOut.model_validate(user))
+    return TokenResponse(access_token=access_token, user=serialize_user(user))
 
 
 @app.post("/auth/local-login", response_model=TokenResponse)
@@ -889,11 +945,14 @@ def local_login(payload: LocalLoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     access_token = create_access_token(str(user.id), settings.app_secret, settings.access_token_expire_minutes)
-    return TokenResponse(access_token=access_token, user=UserOut.model_validate(user))
+    return TokenResponse(access_token=access_token, user=serialize_user(user))
 
 
 @app.post("/auth/invite", response_model=InviteOut)
 def create_invite(payload: InviteCreateRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not settings.allow_invite_link_creation:
+        raise HTTPException(status_code=403, detail="Invite link creation is disabled")
+
     code = secrets.token_urlsafe(12)
     expires_at = None
     if payload.expires_in_hours:
@@ -903,7 +962,7 @@ def create_invite(payload: InviteCreateRequest, user: User = Depends(get_current
     db.add(invite)
     db.commit()
     db.refresh(invite)
-    return InviteOut(code=invite.code, expires_at=invite.expires_at)
+    return InviteOut(code=invite.code, expires_at=invite.expires_at, link=build_invite_link(invite.code))
 
 
 @app.post("/auth/api-keys", response_model=APIKeyCreateResponse)
@@ -936,7 +995,22 @@ def create_api_key(payload: APIKeyCreateRequest, user: User = Depends(get_curren
 
 @app.get("/auth/me", response_model=UserOut)
 def auth_me(user: User = Depends(get_current_user)):
-    return UserOut.model_validate(user)
+    return serialize_user(user)
+
+
+@app.post("/auth/change-password")
+def change_password(payload: ChangePasswordRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not user.password_hash:
+        raise HTTPException(status_code=400, detail="Password change is only available for local accounts")
+    if not verify_password(payload.current_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    if verify_password(payload.new_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="New password must differ from current password")
+
+    user.password_hash = hash_password(payload.new_password)
+    db.add(user)
+    db.commit()
+    return {"status": "ok"}
 
 
 @app.post("/accounts", response_model=SteamAccountOut, status_code=status.HTTP_201_CREATED)

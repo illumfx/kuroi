@@ -44,4 +44,8 @@ OIDC_CLIENT_SECRET=your_client_secret_or_empty
 OIDC_REDIRECT_URI=https://kuroi.example.com/auth/oidc/callback
 OIDC_TOKEN_AUTH_METHOD=auto
 OIDC_USE_PKCE=true
+ALLOW_INVITE_LINK_CREATION=false
 ```
+
+When OIDC is disabled or not fully configured and no users exist yet, kuroi prints a bootstrap invite link/code to the backend console on startup.
+Open that link (or paste the code into the registration form) to create the first account.
