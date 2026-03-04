@@ -39,24 +39,53 @@ jobs:
         id: owner
         run: echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
-      - name: Extract app metadata
-        id: app-meta
+      - name: Extract beta metadata
+        id: meta-beta
+        if: github.ref == 'refs/heads/main'
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ steps.owner.outputs.owner }}/kuroi-app
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,format=short
+            type=raw,value=beta
+            type=raw,value=beta-latest
+            type=sha,format=short,prefix=beta-
 
-      - name: Build and push app image
+      - name: Extract stable metadata
+        id: meta-stable
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ steps.owner.outputs.owner }}/kuroi-app
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest
+
+      - name: Build and push beta image
+        if: github.ref == 'refs/heads/main'
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.app-meta.outputs.tags }}
-          labels: ${{ steps.app-meta.outputs.labels }}
+          tags: ${{ steps.meta-beta.outputs.tags }}
+          labels: ${{ steps.meta-beta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VITE_API_BASE_URL=
+            VITE_OIDC_ENABLED=true
+
+      - name: Build and push stable image
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta-stable.outputs.tags }}
+          labels: ${{ steps.meta-stable.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
