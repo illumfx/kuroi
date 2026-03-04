@@ -1270,7 +1270,7 @@ function App() {
                 <div className="flex items-center gap-2">
                   <input
                     className="anime-input"
-                    placeholder="Search account or profile name"
+                    placeholder="Search"
                     value={usernameSearch}
                     onChange={(event) => setUsernameSearch(event.target.value)}
                   />
