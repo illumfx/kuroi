@@ -18,6 +18,7 @@ type Account = {
   suggested_ban_type?: BanType | null;
   pending_review_count?: number;
   ban_type: BanType;
+  vac_live_expires_at?: string | null;
   vac_live_remaining?: string | null;
   matchmaking_ready: boolean;
   is_public: boolean;
@@ -130,6 +131,7 @@ function App() {
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
 
   const [generatedApiKey, setGeneratedApiKey] = useState("");
+  const [countdownNow, setCountdownNow] = useState(() => Date.now());
   const [editingAccountId, setEditingAccountId] = useState<number | null>(null);
   const [suggestAccount, setSuggestAccount] = useState<Account | null>(null);
   const [reviewAccount, setReviewAccount] = useState<Account | null>(null);
@@ -230,7 +232,11 @@ function App() {
     if (!query) {
       return base;
     }
-    return base.filter((account) => account.username.toLowerCase().includes(query));
+    return base.filter((account) => {
+      const accountName = account.username.toLowerCase();
+      const profileName = (account.steam_profile_name ?? "").toLowerCase();
+      return accountName.includes(query) || profileName.includes(query);
+    });
   }, [accounts, usernameSearch, showOnlyPendingReviews, currentUserId]);
 
   const sortedAccounts = useMemo(() => {
@@ -506,6 +512,20 @@ function App() {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [token, banFilter, showPublicAccounts]);
+
+  useEffect(() => {
+    if (!isLoggedIn) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setCountdownNow(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [isLoggedIn]);
 
   const handleLocalLogin = async (event: FormEvent) => {
     event.preventDefault();
@@ -999,6 +1019,13 @@ function App() {
     }
 
     if (account.ban_type === "VACLive") {
+      const expiresAtRaw = account.vac_live_expires_at;
+      if (expiresAtRaw) {
+        const expiresAt = new Date(expiresAtRaw).getTime();
+        if (Number.isFinite(expiresAt)) {
+          return expiresAt > countdownNow;
+        }
+      }
       return Boolean(account.vac_live_remaining && account.vac_live_remaining !== "Expired");
     }
 
@@ -1049,6 +1076,41 @@ function App() {
       return `${value} ${unit}`;
     }
     return "custom duration";
+  };
+
+  const getVacLiveRemainingLabel = (account: Account) => {
+    if (account.ban_type !== "VACLive") {
+      return "-";
+    }
+
+    const expiresAtRaw = account.vac_live_expires_at;
+    if (expiresAtRaw) {
+      const expiresAt = new Date(expiresAtRaw).getTime();
+      if (Number.isFinite(expiresAt)) {
+        const remainingSeconds = Math.floor((expiresAt - countdownNow) / 1000);
+        if (remainingSeconds <= 0) {
+          return "Expired";
+        }
+
+        const days = Math.floor(remainingSeconds / 86400);
+        const hours = Math.floor((remainingSeconds % 86400) / 3600);
+        const minutes = Math.floor((remainingSeconds % 3600) / 60);
+        const seconds = remainingSeconds % 60;
+
+        if (days > 0) {
+          return `${days}d ${hours}h ${minutes}m`;
+        }
+        if (hours > 0) {
+          return `${hours}h ${minutes}m ${seconds}s`;
+        }
+        if (minutes > 0) {
+          return `${minutes}m ${seconds}s`;
+        }
+        return `${seconds}s`;
+      }
+    }
+
+    return account.vac_live_remaining ?? "Expired";
   };
 
   const getRowClassName = (account: Account) => {
@@ -1167,7 +1229,14 @@ function App() {
               <p className="mt-2 text-zinc-300/85">Steam account management with ban intelligence and automation-first workflows.</p>
               </div>
             </div>
-            <span className="rounded-full border border-fuchsia-300/40 bg-fuchsia-500/15 px-3 py-1 text-xs font-medium text-fuchsia-200">Tokyo Neon</span>
+            <div className="flex items-center gap-2">
+              {isLoggedIn && (
+                <button type="button" className="rounded-xl border border-rose-300/40 bg-rose-500/10 px-4 py-2 text-rose-200 hover:bg-rose-500/20" onClick={handleLogout}>
+                  Logout
+                </button>
+              )}
+              <span className="rounded-full border border-fuchsia-300/40 bg-fuchsia-500/15 px-3 py-1 text-xs font-medium text-fuchsia-200">Tokyo Neon</span>
+            </div>
           </div>
         </header>
 
@@ -1200,13 +1269,26 @@ function App() {
         ) : (
           <div className="space-y-6">
             <div className="anime-panel space-y-4 rounded-3xl p-4">
-              <div className="grid gap-3 xl:grid-cols-[1.2fr_180px_220px_auto_auto]">
-                <input
-                  className="anime-input"
-                  placeholder="Search username"
-                  value={usernameSearch}
-                  onChange={(event) => setUsernameSearch(event.target.value)}
-                />
+              <div className="grid gap-3 xl:grid-cols-[1.2fr_180px_220px_auto]">
+                <div className="relative">
+                  <input
+                    className="anime-input pr-10"
+                    placeholder="Search account or profile name"
+                    value={usernameSearch}
+                    onChange={(event) => setUsernameSearch(event.target.value)}
+                  />
+                  {usernameSearch && (
+                    <button
+                      type="button"
+                      className="absolute right-2 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md border border-zinc-600/70 text-xs text-zinc-300 hover:bg-zinc-700/70"
+                      onClick={() => setUsernameSearch("")}
+                      aria-label="Clear account name filter"
+                      title="Clear"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
                 <select className="anime-input" value={banFilter} onChange={(event) => handleFilterChange(event.target.value as "all" | BanType)}>
                   <option value="all">All bans</option>
                   <option value="None">Not banned</option>
@@ -1224,9 +1306,6 @@ function App() {
                 </select>
                 <button className="anime-secondary-button px-4 py-2" onClick={() => loadAccounts()}>
                   Refresh
-                </button>
-                <button className="rounded-xl border border-rose-300/40 bg-rose-500/10 px-4 py-2 text-rose-200 hover:bg-rose-500/20" onClick={handleLogout}>
-                  Logout
                 </button>
               </div>
 
@@ -1392,7 +1471,7 @@ function App() {
                         </td>
                         <td className="px-3 py-2">{account.ban_type}</td>
                         <td className="px-3 py-2">{getDisplayStatus(account)}</td>
-                        <td className="px-3 py-2">{account.ban_type === "VACLive" ? account.vac_live_remaining ?? "Expired" : "-"}</td>
+                        <td className="px-3 py-2">{getVacLiveRemainingLabel(account)}</td>
                         <td className="px-3 py-2">{account.matchmaking_ready ? "Yes" : "No"}</td>
                         <td className="px-3 py-2">{account.is_public ? "Public" : "Private"}</td>
                         <td className="px-3 py-2">
@@ -1494,7 +1573,7 @@ function App() {
                     {kanbanColumns.vacLive.map((account) => (
                       <div key={account.id} className="rounded-xl border border-zinc-700/60 bg-zinc-900/50 p-3 text-xs">
                         <div className="mb-2 flex items-center gap-2">{renderAccountAvatar(account, "h-7 w-7")}<span className="font-medium">{account.username}</span></div>
-                        <p className="text-zinc-400">Remaining: {account.vac_live_remaining ?? "Expired"}</p>
+                        <p className="text-zinc-400">Remaining: {getVacLiveRemainingLabel(account)}</p>
                         <div className="mt-2">{renderAccountActions(account, true)}</div>
                       </div>
                     ))}
