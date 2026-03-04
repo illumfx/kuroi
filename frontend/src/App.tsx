@@ -1229,14 +1229,11 @@ function App() {
               <p className="mt-2 text-zinc-300/85">Steam account management with ban intelligence and automation-first workflows.</p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              {isLoggedIn && (
-                <button type="button" className="rounded-xl border border-rose-300/40 bg-rose-500/10 px-4 py-2 text-rose-200 hover:bg-rose-500/20" onClick={handleLogout}>
-                  Logout
-                </button>
-              )}
-              <span className="rounded-full border border-fuchsia-300/40 bg-fuchsia-500/15 px-3 py-1 text-xs font-medium text-fuchsia-200">Tokyo Neon</span>
-            </div>
+            {isLoggedIn && (
+              <button type="button" className="rounded-xl border border-rose-300/40 bg-rose-500/10 px-4 py-2 text-rose-200 hover:bg-rose-500/20" onClick={handleLogout}>
+                Logout
+              </button>
+            )}
           </div>
         </header>
 
@@ -1272,21 +1269,23 @@ function App() {
               <div className="grid gap-3 xl:grid-cols-[1.2fr_180px_220px_auto]">
                 <div className="relative">
                   <input
-                    className="anime-input pr-10"
+                    className="anime-input pr-11"
                     placeholder="Search account or profile name"
                     value={usernameSearch}
                     onChange={(event) => setUsernameSearch(event.target.value)}
                   />
                   {usernameSearch && (
-                    <button
-                      type="button"
-                      className="absolute right-2 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md border border-zinc-600/70 text-xs text-zinc-300 hover:bg-zinc-700/70"
-                      onClick={() => setUsernameSearch("")}
-                      aria-label="Clear account name filter"
-                      title="Clear"
-                    >
-                      ✕
-                    </button>
+                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2">
+                      <button
+                        type="button"
+                        className="pointer-events-auto inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-600/70 bg-zinc-900/70 text-xs text-zinc-300 hover:bg-zinc-700/80"
+                        onClick={() => setUsernameSearch("")}
+                        aria-label="Clear account name filter"
+                        title="Clear"
+                      >
+                        ✕
+                      </button>
+                    </div>
                   )}
                 </div>
                 <select className="anime-input" value={banFilter} onChange={(event) => handleFilterChange(event.target.value as "all" | BanType)}>
