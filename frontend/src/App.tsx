@@ -1,7 +1,10 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import kuroiLogo from "./assets/kuroi-logo.svg";
 import HomePage from "./pages/HomePage";
 import ProfilePage from "./pages/ProfilePage";
+import AchievementsPage from "./pages/AchievementsPage";
+import LeaderboardPage from "./pages/LeaderboardPage";
 
 type BanType = "None" | "VAC" | "GameBanned" | "VACLive";
 
@@ -35,7 +38,7 @@ type UserProfile = {
   has_password?: boolean;
 };
 
-type AppPage = "home" | "profile" | "register";
+type AppPage = "home" | "profile" | "register" | "achievements" | "leaderboard";
 
 type AuthConfig = {
   oidc_enabled: boolean;
@@ -103,6 +106,12 @@ const resolveAppPage = (pathname: string): AppPage => {
   }
   if (pathname === "/register") {
     return "register";
+  }
+  if (pathname === "/achievements") {
+    return "achievements";
+  }
+  if (pathname === "/leaderboard") {
+    return "leaderboard";
   }
   return "home";
 };
@@ -186,6 +195,8 @@ function App() {
   const LIVE_REFRESH_INTERVAL_MS = 5000;
   const [token, setToken] = useState(localStorage.getItem("kuroi_token") ?? "");
   const [currentPageRoute, setCurrentPageRoute] = useState<AppPage>(() => resolveAppPage(window.location.pathname));
+  const [isHeaderMenuOpen, setIsHeaderMenuOpen] = useState(false);
+  const [isHeaderMenuRendered, setIsHeaderMenuRendered] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [banFilter, setBanFilter] = useState<"all" | BanType>("all");
@@ -245,6 +256,11 @@ function App() {
   const lastOwnPendingReviewCountRef = useRef(0);
   const pendingPulseTimeoutRef = useRef<number | null>(null);
   const uiNoticeTimeoutRef = useRef<number | null>(null);
+  const headerMenuCloseTimeoutRef = useRef<number | null>(null);
+  const headerMenuRef = useRef<HTMLDivElement | null>(null);
+  const extrasButtonRef = useRef<HTMLButtonElement | null>(null);
+  const headerMenuPanelRef = useRef<HTMLDivElement | null>(null);
+  const [headerMenuPosition, setHeaderMenuPosition] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
 
   const showUiNotice = (message: string) => {
     setUiNotice(message);
@@ -258,11 +274,37 @@ function App() {
   };
 
   const navigateToPage = (page: AppPage) => {
-    const targetPath = page === "profile" ? "/profile" : page === "register" ? "/register" : "/";
+    const targetPath =
+      page === "profile"
+        ? "/profile"
+        : page === "register"
+          ? "/register"
+          : page === "achievements"
+            ? "/achievements"
+            : page === "leaderboard"
+              ? "/leaderboard"
+              : "/";
     if (window.location.pathname !== targetPath) {
       window.history.pushState(null, "", targetPath);
     }
+    setIsHeaderMenuOpen(false);
     setCurrentPageRoute(page);
+  };
+
+  const updateHeaderMenuPosition = () => {
+    const button = extrasButtonRef.current;
+    if (!button) {
+      return;
+    }
+
+    const rect = button.getBoundingClientRect();
+    const menuWidth = headerMenuPanelRef.current?.offsetWidth ?? 180;
+    const centeredLeft = rect.left + rect.width / 2 - menuWidth / 2;
+    const clampedLeft = Math.min(Math.max(centeredLeft, 8), window.innerWidth - menuWidth - 8);
+    setHeaderMenuPosition({
+      top: rect.bottom + 8,
+      left: clampedLeft,
+    });
   };
 
   const clearSession = (message?: string) => {
@@ -280,6 +322,7 @@ function App() {
     setError("");
     setSessionNotice(message ?? "");
     setCurrentPageRoute("home");
+    setIsHeaderMenuOpen(false);
     localStorage.removeItem("kuroi_token");
   };
 
@@ -497,6 +540,77 @@ function App() {
   );
   const allOwnOnPageSelected =
     ownPaginatedAccounts.length > 0 && ownPaginatedAccounts.every((account) => selectedAccountIds.has(account.id));
+  const isExtrasPageActive = currentPageRoute === "achievements" || currentPageRoute === "leaderboard";
+
+  useEffect(() => {
+    const handleDocumentMouseDown = (event: MouseEvent) => {
+      if (!isHeaderMenuOpen) {
+        return;
+      }
+
+      if (!(event.target instanceof Node)) {
+        return;
+      }
+
+      const clickedInsideTrigger = headerMenuRef.current?.contains(event.target) ?? false;
+      const clickedInsideMenu = headerMenuPanelRef.current?.contains(event.target) ?? false;
+
+      if (!clickedInsideTrigger && !clickedInsideMenu) {
+        setIsHeaderMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleDocumentMouseDown);
+    return () => {
+      document.removeEventListener("mousedown", handleDocumentMouseDown);
+    };
+  }, [isHeaderMenuOpen]);
+
+  useEffect(() => {
+    if (isHeaderMenuOpen) {
+      if (headerMenuCloseTimeoutRef.current) {
+        window.clearTimeout(headerMenuCloseTimeoutRef.current);
+        headerMenuCloseTimeoutRef.current = null;
+      }
+      setIsHeaderMenuRendered(true);
+      return;
+    }
+
+    if (!isHeaderMenuRendered) {
+      return;
+    }
+
+    headerMenuCloseTimeoutRef.current = window.setTimeout(() => {
+      setIsHeaderMenuRendered(false);
+      headerMenuCloseTimeoutRef.current = null;
+    }, 150);
+
+    return () => {
+      if (headerMenuCloseTimeoutRef.current) {
+        window.clearTimeout(headerMenuCloseTimeoutRef.current);
+        headerMenuCloseTimeoutRef.current = null;
+      }
+    };
+  }, [isHeaderMenuOpen, isHeaderMenuRendered]);
+
+  useEffect(() => {
+    if (!isHeaderMenuOpen) {
+      return;
+    }
+
+    updateHeaderMenuPosition();
+
+    const handleViewportChange = () => {
+      updateHeaderMenuPosition();
+    };
+
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("scroll", handleViewportChange, true);
+    return () => {
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
+    };
+  }, [isHeaderMenuOpen]);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -510,7 +624,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!isLoggedIn && currentPageRoute === "profile") {
+    if (!isLoggedIn && (currentPageRoute === "profile" || currentPageRoute === "achievements" || currentPageRoute === "leaderboard")) {
       navigateToPage("home");
     }
     if (!isLoggedIn && currentPageRoute === "register" && !allowInviteLinkCreation) {
@@ -1526,11 +1640,71 @@ function App() {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  className="rounded-xl border border-sky-300/40 bg-sky-500/10 px-4 py-2 text-sky-100 hover:bg-sky-500/20"
-                  onClick={() => navigateToPage(currentPageRoute === "profile" ? "home" : "profile")}
+                  className={`rounded-xl border px-4 py-2 ${
+                    currentPageRoute === "home"
+                      ? "border-sky-300/40 bg-sky-500/10 text-sky-100"
+                      : "border-zinc-500/50 bg-zinc-800/70 text-zinc-100 hover:bg-zinc-700/80"
+                  }`}
+                  onClick={() => navigateToPage("home")}
                 >
-                  {currentPageRoute === "profile" ? "Accounts" : "Profile"}
+                  Accounts
                 </button>
+                <button
+                  type="button"
+                  className={`rounded-xl border px-4 py-2 ${
+                    currentPageRoute === "profile"
+                      ? "border-sky-300/40 bg-sky-500/10 text-sky-100"
+                      : "border-zinc-500/50 bg-zinc-800/70 text-zinc-100 hover:bg-zinc-700/80"
+                  }`}
+                  onClick={() => navigateToPage("profile")}
+                >
+                  Profile
+                </button>
+                <div className="relative" ref={headerMenuRef}>
+                  <button
+                    ref={extrasButtonRef}
+                    type="button"
+                    className={`rounded-xl border px-4 py-2 ${
+                      isExtrasPageActive
+                        ? "border-sky-300/40 bg-sky-500/10 text-sky-100"
+                        : "border-zinc-500/50 bg-zinc-800/70 text-zinc-100 hover:bg-zinc-700/80"
+                    }`}
+                    onClick={() => {
+                      if (!isHeaderMenuOpen) {
+                        updateHeaderMenuPosition();
+                      }
+                      setIsHeaderMenuOpen((open) => !open);
+                    }}
+                  >
+                    Extras ▾
+                  </button>
+                  {isHeaderMenuRendered &&
+                    createPortal(
+                      <div
+                        ref={headerMenuPanelRef}
+                        className={`fixed min-w-[180px] overflow-hidden rounded-xl border border-zinc-600/70 bg-zinc-900/95 p-1 shadow-xl backdrop-blur-sm transition duration-150 ease-out origin-top ${
+                          isHeaderMenuOpen ? "translate-y-0 scale-100 opacity-100" : "-translate-y-1 scale-95 opacity-0 pointer-events-none"
+                        }`}
+                        style={{ top: headerMenuPosition.top, left: headerMenuPosition.left, zIndex: 2147483647 }}
+                      >
+                        <button
+                          type="button"
+                          className="w-full rounded-lg px-3 py-2 text-left text-sm text-zinc-100 hover:bg-zinc-700/80"
+                          onClick={() => navigateToPage("achievements")}
+                        >
+                          Achievements
+                        </button>
+                        <button
+                          type="button"
+                          className="w-full rounded-lg px-3 py-2 text-left text-sm text-zinc-100 hover:bg-zinc-700/80"
+                          onClick={() => navigateToPage("leaderboard")}
+                        >
+                          Leaderboard
+                        </button>
+                      </div>,
+                      document.body,
+                    )}
+                </div>
                 <button type="button" className="rounded-xl border border-rose-300/40 bg-rose-500/10 px-4 py-2 text-rose-200 hover:bg-rose-500/20" onClick={handleLogout}>
                   Logout
                 </button>
@@ -1678,6 +1852,10 @@ function App() {
                 onNewPasswordChange={setNewPasswordInput}
                 onSubmit={handleChangePassword}
               />
+            ) : currentPageRoute === "achievements" ? (
+              <AchievementsPage />
+            ) : currentPageRoute === "leaderboard" ? (
+              <LeaderboardPage />
             ) : (
             <HomePage>
             <div className="anime-panel space-y-4 rounded-3xl p-4">
