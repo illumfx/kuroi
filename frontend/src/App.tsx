@@ -44,6 +44,7 @@ type AuthConfig = {
   oidc_enabled: boolean;
   oidc_configured: boolean;
   allow_invite_link_creation: boolean;
+  allow_shiro_login: boolean;
 };
 
 type ApiKeyResponse = {
@@ -255,6 +256,7 @@ function App() {
   const [shiroMessage, setShiroMessage] = useState("");
   const [showManagementTools, setShowManagementTools] = useState(false);
   const [allowInviteLinkCreation, setAllowInviteLinkCreation] = useState(false);
+  const [allowShiroLogin, setAllowShiroLogin] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<number>>(new Set());
   const [hasNewPendingReviewsPulse, setHasNewPendingReviewsPulse] = useState(false);
@@ -688,14 +690,17 @@ function App() {
         if (!response.ok) {
           setOidcVisible(false);
           setAllowInviteLinkCreation(false);
+          setAllowShiroLogin(false);
           return;
         }
         const config = (await response.json()) as AuthConfig;
         setOidcVisible(config.oidc_enabled);
         setAllowInviteLinkCreation(config.allow_invite_link_creation);
+        setAllowShiroLogin(config.allow_shiro_login);
       } catch {
         setOidcVisible(false);
         setAllowInviteLinkCreation(false);
+        setAllowShiroLogin(false);
       }
     };
 
@@ -1604,6 +1609,11 @@ function App() {
   };
 
   const handleShiroLogin = async (account: Account) => {
+    if (!allowShiroLogin) {
+      setError("Shiro one-click login is disabled");
+      return;
+    }
+
     setShiroLoginAccount(account);
     setShiroLoading(true);
     setShiroMessage("Launching Shiro...");
@@ -1650,14 +1660,16 @@ function App() {
     if (currentUserId === account.owner_id) {
       return (
         <div className={`flex ${compact ? "flex-wrap" : ""} gap-1.5`}>
-          <button
-            type="button"
-            className="inline-flex items-center rounded-lg border border-emerald-300/40 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-100 hover:bg-emerald-500/20"
-            title="Login to this Steam account via Shiro"
-            onClick={() => handleShiroLogin(account)}
-          >
-            ▶ Login
-          </button>
+          {allowShiroLogin && (
+            <button
+              type="button"
+              className="inline-flex items-center rounded-lg border border-emerald-300/40 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-100 hover:bg-emerald-500/20"
+              title="Login to this Steam account via Shiro"
+              onClick={() => handleShiroLogin(account)}
+            >
+              ▶ Login
+            </button>
+          )}
           <button
             type="button"
             className="inline-flex items-center rounded-lg border border-sky-300/40 bg-sky-500/10 px-2 py-1 text-[11px] text-sky-100 hover:bg-sky-500/20"

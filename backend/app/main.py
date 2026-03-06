@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     oidc_token_auth_method: str = "auto"
     oidc_use_pkce: bool = True
     allow_invite_link_creation: bool = False
+    allow_shiro_login: bool = False
 
     steam_api_key: str | None = None
     steam_status_refresh_seconds: int = 30
@@ -714,6 +715,7 @@ def auth_config() -> dict[str, bool]:
         "oidc_enabled": settings.oidc_enabled,
         "oidc_configured": oidc_configured,
         "allow_invite_link_creation": settings.allow_invite_link_creation,
+        "allow_shiro_login": settings.allow_shiro_login,
     }
 
 
@@ -1392,9 +1394,15 @@ async def shiro_login(
     Returns {token, launch_url} – the frontend opens the launch_url
     which triggers the shiro:// protocol handler on the user's machine.
     """
+    if not settings.allow_shiro_login:
+        raise HTTPException(status_code=403, detail="Shiro one-click login is disabled")
+
     account = db.get(SteamAccount, account_id)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
+
+    if account.owner_id != actor.id:
+        raise HTTPException(status_code=403, detail="Only the account owner can use Shiro login")
 
     plaintext_password = decrypt_account_password(account.password, settings.app_secret)
 

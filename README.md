@@ -5,6 +5,8 @@
 
 `kuroi` is a Steam account management app with OIDC authentication, API-key automation, account visibility controls, and ban-state tracking.
 
+Supports optional one-click Steam login integration via [Shiro](https://github.com/ZeloteZ/shiro).
+
 </div>
 
 ---
@@ -45,7 +47,12 @@ OIDC_REDIRECT_URI=https://kuroi.example.com/auth/oidc/callback
 OIDC_TOKEN_AUTH_METHOD=auto
 OIDC_USE_PKCE=true
 ALLOW_INVITE_LINK_CREATION=false
+ALLOW_SHIRO_LOGIN=false
+SHIRO_TOKEN_TTL=30
 ```
+
+If `ALLOW_SHIRO_LOGIN=true`, users will see the Shiro one-click `Login` action in the UI.
+The app generates a short-lived one-time token and launches `shiro://...` so the local Shiro client can fetch credentials securely.
 
 When OIDC is disabled or not fully configured and no users exist yet, kuroi prints a bootstrap invite link/code to the backend console on startup.
 Open that link (or paste the code into the registration form) to create the first account.
