@@ -1,12 +1,15 @@
-<h1 align="center">kuroi</h1>
+<div align="center">
 
+<h1>kuroi</h1>
 
-<p align="center"><img alt="image" src="./frontend/src/assets/kuroi-logo.svg" /></p>
+<p><img alt="image" src="./frontend/src/assets/kuroi-logo.svg" /></p>
 
-<p align="center">
-`kuroi` is a Steam account management app with OIDC authentication, API-key automation, account visibility controls, and ban-state tracking.
-Supports optional one-click Steam login integration via [Shiro](https://github.com/ZeloteZ/shiro).
+<p>
+<code>kuroi</code> is a Steam account management app with OIDC authentication, API-key automation, account visibility controls, and ban-state tracking.
+Supports optional one-click Steam login integration via <a href="https://github.com/ZeloteZ/shiro">Shiro</a>.
 </p>
+
+</div>
 
 ---
 
