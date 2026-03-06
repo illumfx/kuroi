@@ -55,7 +55,6 @@ from .security import (
     generate_api_key,
     hash_api_key,
     hash_password,
-    verify_and_update_password,
     verify_password,
 )
 
@@ -945,14 +944,8 @@ def local_login(payload: LocalLoginRequest, db: Session = Depends(get_db)):
     user = db.scalar(select(User).where(User.username == payload.username))
     if not user or not user.password_hash:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    password_ok, updated_hash = verify_and_update_password(payload.password, user.password_hash)
-    if not password_ok:
+    if not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    if updated_hash:
-        user.password_hash = updated_hash
-        db.add(user)
-        db.commit()
-        db.refresh(user)
 
     access_token = create_access_token(str(user.id), settings.app_secret, settings.access_token_expire_minutes)
     return TokenResponse(access_token=access_token, user=serialize_user(user))
@@ -1012,11 +1005,8 @@ def auth_me(user: User = Depends(get_current_user)):
 def change_password(payload: ChangePasswordRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if not user.password_hash:
         raise HTTPException(status_code=400, detail="Password change is only available for local accounts")
-    password_ok, updated_hash = verify_and_update_password(payload.current_password, user.password_hash)
-    if not password_ok:
+    if not verify_password(payload.current_password, user.password_hash):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
-    if updated_hash:
-        user.password_hash = updated_hash
     if verify_password(payload.new_password, user.password_hash):
         raise HTTPException(status_code=400, detail="New password must differ from current password")
 
