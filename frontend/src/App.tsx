@@ -248,6 +248,11 @@ function App() {
   const [massImportPublic, setMassImportPublic] = useState(false);
   const [massImportResult, setMassImportResult] = useState<MassImportResponse | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+
+  // Shiro (Steam one-click login) state
+  const [shiroLoginAccount, setShiroLoginAccount] = useState<Account | null>(null);
+  const [shiroLoading, setShiroLoading] = useState(false);
+  const [shiroMessage, setShiroMessage] = useState("");
   const [showManagementTools, setShowManagementTools] = useState(false);
   const [allowInviteLinkCreation, setAllowInviteLinkCreation] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
@@ -1598,10 +1603,61 @@ function App() {
     );
   };
 
+  const handleShiroLogin = async (account: Account) => {
+    setShiroLoginAccount(account);
+    setShiroLoading(true);
+    setShiroMessage("Launching Shiro...");
+
+    try {
+      const resp = await apiFetch<{
+        token: string;
+        launch_url: string;
+      }>(`/accounts/${account.id}/shiro-login`, token, { method: "POST" });
+
+      // Open the shiro:// protocol URL via a hidden iframe (doesn't navigate away).
+      const iframe = document.createElement("iframe");
+      iframe.style.display = "none";
+      iframe.src = resp.launch_url;
+      document.body.appendChild(iframe);
+      setTimeout(() => iframe.remove(), 2000);
+
+      setShiroMessage("Shiro is handling the login – check the Shiro window.");
+      showUiNotice(`Shiro launched for ${account.username}`);
+
+      // Auto-dismiss after a few seconds.
+      setTimeout(() => {
+        setShiroLoginAccount(null);
+        setShiroLoading(false);
+        setShiroMessage("");
+      }, 4000);
+    } catch (err) {
+      setShiroMessage(err instanceof Error ? err.message : "Failed to launch Shiro");
+      setShiroLoading(false);
+      setTimeout(() => {
+        setShiroLoginAccount(null);
+        setShiroMessage("");
+      }, 3000);
+    }
+  };
+
+  const closeShiroModal = () => {
+    setShiroLoginAccount(null);
+    setShiroLoading(false);
+    setShiroMessage("");
+  };
+
   const renderAccountActions = (account: Account, compact = false) => {
     if (currentUserId === account.owner_id) {
       return (
         <div className={`flex ${compact ? "flex-wrap" : ""} gap-1.5`}>
+          <button
+            type="button"
+            className="inline-flex items-center rounded-lg border border-emerald-300/40 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-100 hover:bg-emerald-500/20"
+            title="Login to this Steam account via Shiro"
+            onClick={() => handleShiroLogin(account)}
+          >
+            ▶ Login
+          </button>
           <button
             type="button"
             className="inline-flex items-center rounded-lg border border-sky-300/40 bg-sky-500/10 px-2 py-1 text-[11px] text-sky-100 hover:bg-sky-500/20"
@@ -2700,6 +2756,33 @@ function App() {
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Shiro Steam Login Modal */}
+      {shiroLoginAccount && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 backdrop-blur-sm px-4">
+          <div className="anime-panel w-full max-w-sm rounded-3xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-zinc-100">
+                Steam Login – {shiroLoginAccount.username}
+              </h2>
+              <button
+                type="button"
+                className="rounded-lg border border-zinc-600 px-3 py-1 text-sm text-zinc-300 hover:bg-zinc-700/60"
+                onClick={closeShiroModal}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="flex items-center gap-3">
+              {shiroLoading && (
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-emerald-400 border-t-transparent" />
+              )}
+              <p className="text-sm text-zinc-300">{shiroMessage}</p>
+            </div>
           </div>
         </div>
       )}

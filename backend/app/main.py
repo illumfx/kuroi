@@ -13,7 +13,7 @@ from typing import Any
 from urllib.parse import quote, urlencode
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.responses import RedirectResponse
@@ -80,6 +80,9 @@ class Settings(BaseSettings):
     steam_api_key: str | None = None
     steam_status_refresh_seconds: int = 30
     steam_id_legacy_cleanup_enabled: bool = False
+
+    # Shiro one-time token TTL (seconds).
+    shiro_token_ttl: int = 30
 
 
 @lru_cache
@@ -1359,6 +1362,76 @@ def delete_account(
 
     db.delete(account)
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Shiro one-time token endpoints (Steam one-click login)
+# ---------------------------------------------------------------------------
+
+# In-memory store for one-time Shiro tokens: token → {account_name, password, created_at}
+_shiro_tokens: dict[str, dict[str, Any]] = {}
+
+
+def _cleanup_expired_shiro_tokens() -> None:
+    """Remove Shiro tokens older than the configured TTL."""
+    now = time.time()
+    expired = [t for t, v in _shiro_tokens.items() if now - v["created_at"] > settings.shiro_token_ttl]
+    for t in expired:
+        del _shiro_tokens[t]
+
+
+@app.post("/accounts/{account_id}/shiro-login")
+async def shiro_login(
+    account_id: int,
+    request: Request,
+    actor: User = Depends(resolve_actor),
+    db: Session = Depends(get_db),
+):
+    """Create a one-time token for Shiro to fetch credentials.
+
+    Returns {token, launch_url} – the frontend opens the launch_url
+    which triggers the shiro:// protocol handler on the user's machine.
+    """
+    account = db.get(SteamAccount, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    plaintext_password = decrypt_account_password(account.password, settings.app_secret)
+
+    # Cleanup expired tokens before creating a new one.
+    _cleanup_expired_shiro_tokens()
+
+    # Create a cryptographically random one-time token.
+    token = secrets.token_urlsafe(32)
+    _shiro_tokens[token] = {
+        "account_name": account.username,
+        "password": plaintext_password,
+        "persona_name": account.steam_profile_name or account.username,
+        "created_at": time.time(),
+    }
+
+    # Derive API base URL from the incoming request so it works in any
+    # environment (local dev, Docker, behind reverse proxy, etc.).
+    api_base = quote(str(request.base_url).rstrip("/"), safe="")
+    launch_url = f"shiro://login?token={token}&api={api_base}"
+
+    return {"token": token, "launch_url": launch_url}
+
+
+@app.get("/shiro/credentials/{token}")
+async def shiro_credentials(token: str):
+    """Exchange a one-time token for account credentials.
+
+    This endpoint requires no authentication – the token itself IS the auth.
+    The token is deleted immediately after use (single-use).
+    """
+    _cleanup_expired_shiro_tokens()
+
+    creds = _shiro_tokens.pop(token, None)
+    if not creds:
+        raise HTTPException(status_code=404, detail="Token not found or expired")
+
+    return {"account_name": creds["account_name"], "password": creds["password"], "persona_name": creds.get("persona_name", creds["account_name"])}
 
 
 def register_frontend_routes() -> None:
