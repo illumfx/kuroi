@@ -1334,39 +1334,59 @@ function App() {
     clearSession();
   };
 
-  const escapeCsvValue = (value: string | number | boolean | null | undefined) => {
-    const text = value === null || value === undefined ? "" : String(value);
-    return `"${text.replace(/"/g, '""')}"`;
-  };
-
-  const downloadAccountsCsv = (rows: Account[], fileName: string) => {
+  const downloadAccountsTxt = (rows: Account[], fileName: string) => {
     if (!rows.length) {
       setError("No accounts to export");
       return;
     }
 
-    const header = ["id", "username", "email", "steam_id64", "password", "ban_type", "vac_live_remaining", "matchmaking_ready", "is_public", "created_at"];
-    const csvLines = [
-      header.join(","),
-      ...rows.map((account) =>
-        [
-          account.id,
-          account.username,
-          account.email,
-          account.steam_id64 ?? "",
-          account.password,
-          account.ban_type,
-          account.vac_live_remaining ?? "",
-          account.matchmaking_ready,
-          account.is_public,
-          account.created_at,
-        ]
-          .map((value) => escapeCsvValue(value))
-          .join(","),
-      ),
-    ];
+    const formatMassImportTimestamp = (value: string | null | undefined) => {
+      const raw = (value ?? "").trim();
+      if (!raw) {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, "0");
+        const day = String(now.getDate()).padStart(2, "0");
+        const hours = String(now.getHours()).padStart(2, "0");
+        const minutes = String(now.getMinutes()).padStart(2, "0");
+        const seconds = String(now.getSeconds()).padStart(2, "0");
+        const microseconds = `${String(now.getMilliseconds()).padStart(3, "0")}000`;
+        return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${microseconds}`;
+      }
 
-    const blob = new Blob([csvLines.join("\n")], { type: "text/csv;charset=utf-8;" });
+      const normalized = raw.replace("T", " ").replace(/Z$/, "").replace(/[+-]\d{2}:\d{2}$/, "");
+      const timestampMatch = normalized.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:\.(\d+))?$/);
+      if (timestampMatch) {
+        const base = timestampMatch[1];
+        const fraction = (timestampMatch[2] ?? "").padEnd(6, "0").slice(0, 6);
+        return `${base}.${fraction}`;
+      }
+
+      const parsed = new Date(raw);
+      if (!Number.isNaN(parsed.getTime())) {
+        const year = parsed.getFullYear();
+        const month = String(parsed.getMonth() + 1).padStart(2, "0");
+        const day = String(parsed.getDate()).padStart(2, "0");
+        const hours = String(parsed.getHours()).padStart(2, "0");
+        const minutes = String(parsed.getMinutes()).padStart(2, "0");
+        const seconds = String(parsed.getSeconds()).padStart(2, "0");
+        const microseconds = `${String(parsed.getMilliseconds()).padStart(3, "0")}000`;
+        return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${microseconds}`;
+      }
+
+      return raw;
+    };
+
+    const textLines = rows.map((account) => {
+      const timestamp = formatMassImportTimestamp(account.created_at);
+      const email = account.email.trim();
+      const username = account.username.trim();
+      const password = account.password.trim();
+      const steamId = (account.steam_id64 ?? "").trim();
+      return `${timestamp}: ${email} | ${username} | ${password} | ${steamId}`;
+    });
+
+    const blob = new Blob([textLines.join("\n")], { type: "text/plain;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
@@ -1379,12 +1399,12 @@ function App() {
 
   const handleExportAllOwnAccounts = () => {
     setError("");
-    downloadAccountsCsv(ownAccounts, "kuroi-accounts-all.csv");
+    downloadAccountsTxt(ownAccounts, "kuroi-accounts-all.txt");
   };
 
   const handleExportSelectedAccounts = () => {
     setError("");
-    downloadAccountsCsv(selectedOwnAccounts, "kuroi-accounts-selected.csv");
+    downloadAccountsTxt(selectedOwnAccounts, "kuroi-accounts-selected.txt");
   };
 
   const toggleAccountSelection = (accountId: number) => {
