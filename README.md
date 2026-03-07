@@ -38,9 +38,11 @@ APP_SECRET=CHANGE_ME_LONG_RANDOM_SECRET
 IMAGE_TAG=latest
 ```
 
-Optional OIDC values:
+Optional values:
 
 ```env
+ALLOW_INVITE_LINK_CREATION=false
+STEAM_API_KEY=your_steam_api_key
 OIDC_ENABLED=true
 OIDC_ISSUER_URL=https://auth.example.com
 OIDC_CLIENT_ID=your_client_id
@@ -48,7 +50,6 @@ OIDC_CLIENT_SECRET=your_client_secret_or_empty
 OIDC_REDIRECT_URI=https://kuroi.example.com/auth/oidc/callback
 OIDC_TOKEN_AUTH_METHOD=auto
 OIDC_USE_PKCE=true
-ALLOW_INVITE_LINK_CREATION=false
 ALLOW_SHIRO_LOGIN=false
 SHIRO_TOKEN_TTL=30
 ```
