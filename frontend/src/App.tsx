@@ -1614,6 +1614,12 @@ function App() {
       return;
     }
 
+    // Only account owners or viewers of public accounts should be able to launch Shiro.
+    if (currentUserId !== account.owner_id && !account.is_public) {
+      setError("Shiro login is only available for public accounts");
+      return;
+    }
+
     setShiroLoginAccount(account);
     setShiroLoading(true);
     setShiroMessage("Launching Shiro...");
@@ -1697,13 +1703,25 @@ function App() {
     }
 
     return (
-      <button
-        type="button"
-        className="rounded-lg border border-fuchsia-300/40 bg-fuchsia-500/10 px-2 py-1 text-xs text-fuchsia-100 hover:bg-fuchsia-500/20"
-        onClick={() => openSuggestModal(account)}
-      >
-        Suggest
-      </button>
+      <div className={`flex ${compact ? "flex-wrap" : ""} gap-1.5`}>
+        {allowShiroLogin && account.is_public && (
+          <button
+            type="button"
+            className="inline-flex items-center rounded-lg border border-emerald-300/40 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-100 hover:bg-emerald-500/20"
+            title="Login to this public Steam account via Shiro"
+            onClick={() => handleShiroLogin(account)}
+          >
+            Login with Shiro
+          </button>
+        )}
+        <button
+          type="button"
+          className="rounded-lg border border-fuchsia-300/40 bg-fuchsia-500/10 px-2 py-1 text-xs text-fuchsia-100 hover:bg-fuchsia-500/20"
+          onClick={() => openSuggestModal(account)}
+        >
+          Suggest
+        </button>
+      </div>
     );
   };
 
