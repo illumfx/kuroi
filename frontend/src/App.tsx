@@ -1711,7 +1711,7 @@ function App() {
             title="Login to this public Steam account via Shiro"
             onClick={() => handleShiroLogin(account)}
           >
-            Login with Shiro
+            ▶ Login
           </button>
         )}
         <button
