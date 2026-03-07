@@ -1401,8 +1401,9 @@ async def shiro_login(
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
 
-    if account.owner_id != actor.id:
-        raise HTTPException(status_code=403, detail="Only the account owner can use Shiro login")
+    is_owner = account.owner_id == actor.id
+    if not is_owner and not account.is_public:
+        raise HTTPException(status_code=403, detail="Shiro login is only available for the account owner or public accounts")
 
     plaintext_password = decrypt_account_password(account.password, settings.app_secret)
 
