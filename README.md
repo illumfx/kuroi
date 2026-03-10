@@ -9,20 +9,14 @@
 Supports optional one-click Steam login integration via <a href="https://github.com/ZeloteZ/shiro">Shiro</a>.
 </p>
 
+<img height="650" alt="preview-image" src="https://raw.githubusercontent.com/illumfx/kuroi/refs/heads/assets/previews/1.png" />
+
 </div>
 
 ---
 
 > [!NOTE]
 > kuroi is mostly vibe-coded and not in a stable state.
-
-## Production model (simplified)
-
-Production now uses **one application image** (`kuroi-app`) plus **one database** (`postgres`).
-
-- App image includes FastAPI backend + built frontend.
-- No separate frontend/backend images are required for production rollout.
-- Optional Traefik override is provided for existing reverse proxy setups.
 
 ## Configure environment
 
