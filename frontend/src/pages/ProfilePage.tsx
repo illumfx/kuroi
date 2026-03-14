@@ -2,11 +2,16 @@ import { FormEvent } from "react";
 
 type ProfilePageProps = {
   currentUsername: string;
+  currentDisplayName: string;
+  profileDisplayNameInput: string;
   currentEmail: string;
   canChangePassword: boolean;
+  isUpdatingProfile: boolean;
   currentPasswordInput: string;
   newPasswordInput: string;
   isChangingPassword: boolean;
+  onDisplayNameChange: (value: string) => void;
+  onProfileSubmit: (event: FormEvent) => void;
   onCurrentPasswordChange: (value: string) => void;
   onNewPasswordChange: (value: string) => void;
   onSubmit: (event: FormEvent) => void;
@@ -14,11 +19,16 @@ type ProfilePageProps = {
 
 function ProfilePage({
   currentUsername,
+  currentDisplayName,
+  profileDisplayNameInput,
   currentEmail,
   canChangePassword,
+  isUpdatingProfile,
   currentPasswordInput,
   newPasswordInput,
   isChangingPassword,
+  onDisplayNameChange,
+  onProfileSubmit,
   onCurrentPasswordChange,
   onNewPasswordChange,
   onSubmit,
@@ -34,6 +44,10 @@ function ProfilePage({
 
       <div className="grid gap-4 md:grid-cols-2">
         <div className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-4">
+          <p className="text-xs uppercase tracking-wider text-zinc-400">Display Name</p>
+          <p className="mt-2 text-sm text-zinc-100">{currentDisplayName || "-"}</p>
+        </div>
+        <div className="rounded-2xl border border-zinc-700/70 bg-zinc-950/70 p-4">
           <p className="text-xs uppercase tracking-wider text-zinc-400">Username</p>
           <p className="mt-2 text-sm text-zinc-100">{currentUsername || "-"}</p>
         </div>
@@ -42,6 +56,21 @@ function ProfilePage({
           <p className="mt-2 text-sm text-zinc-100">{currentEmail || "-"}</p>
         </div>
       </div>
+
+      <form onSubmit={onProfileSubmit} className="mt-6 grid gap-4 md:grid-cols-[1fr_auto]">
+        <input
+          className="anime-input"
+          placeholder="Display name"
+          value={profileDisplayNameInput}
+          onChange={(event) => onDisplayNameChange(event.target.value)}
+          minLength={1}
+          maxLength={64}
+          required
+        />
+        <button className="anime-primary-button" disabled={isUpdatingProfile}>
+          {isUpdatingProfile ? "Updating..." : "Update Display Name"}
+        </button>
+      </form>
 
       {canChangePassword ? (
         <form onSubmit={onSubmit} className="mt-6 grid gap-4 md:grid-cols-2">

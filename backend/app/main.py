@@ -25,7 +25,7 @@ from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
 from .database import Base, SessionLocal, engine, get_db
-from .models import APIKey, AccountSuggestion, InviteCode, SteamAccount, User
+from .models import APIKey, AccountSuggestion, InviteCode, SteamAccount, User, VacLiveFault
 from .models import BanStatus, BanType, SuggestionStatus
 from .schemas import (
     AccountSuggestionCreate,
@@ -45,7 +45,10 @@ from .schemas import (
     SteamAccountOut,
     SteamAccountUpdate,
     TokenResponse,
+    UserChoiceOut,
+    UserProfileUpdateRequest,
     UserOut,
+    VacLiveFaultLeaderboardEntryOut,
 )
 from .security import (
     api_key_prefix,
@@ -122,10 +125,17 @@ def ensure_schema_extensions() -> None:
     column_names = {column["name"] for column in columns}
 
     with engine.begin() as connection:
+        user_columns = {column["name"] for column in inspector.get_columns("users")}
+        if "display_name" not in user_columns:
+            connection.exec_driver_sql("ALTER TABLE users ADD COLUMN display_name VARCHAR(64)")
         if "ban_type" not in column_names:
             connection.exec_driver_sql("ALTER TABLE steam_accounts ADD COLUMN ban_type VARCHAR(16) DEFAULT 'None'")
         if "vac_live_expires_at" not in column_names:
             connection.exec_driver_sql("ALTER TABLE steam_accounts ADD COLUMN vac_live_expires_at TIMESTAMP")
+        if "is_prime" not in column_names:
+            connection.exec_driver_sql("ALTER TABLE steam_accounts ADD COLUMN is_prime BOOLEAN DEFAULT FALSE")
+        if "vac_live_fault_user_id" not in column_names:
+            connection.exec_driver_sql("ALTER TABLE steam_accounts ADD COLUMN vac_live_fault_user_id INTEGER")
         if "matchmaking_ready" not in column_names:
             connection.exec_driver_sql("ALTER TABLE steam_accounts ADD COLUMN matchmaking_ready BOOLEAN DEFAULT FALSE")
         if "online_status" not in column_names:
@@ -152,6 +162,8 @@ def ensure_schema_extensions() -> None:
                 connection.exec_driver_sql("ALTER TABLE account_suggestions ADD COLUMN suggested_vac_live_value INTEGER")
             if "suggested_vac_live_unit" not in suggestion_columns:
                 connection.exec_driver_sql("ALTER TABLE account_suggestions ADD COLUMN suggested_vac_live_unit VARCHAR(8)")
+            if "suggested_vac_live_fault_user_id" not in suggestion_columns:
+                connection.exec_driver_sql("ALTER TABLE account_suggestions ADD COLUMN suggested_vac_live_fault_user_id INTEGER")
 
         if settings.steam_id_legacy_cleanup_enabled:
             connection.execute(
@@ -163,6 +175,8 @@ def ensure_schema_extensions() -> None:
                 {"pattern": "local_%"},
             )
         connection.exec_driver_sql("UPDATE steam_accounts SET matchmaking_ready = FALSE WHERE matchmaking_ready IS NULL")
+        connection.exec_driver_sql("UPDATE steam_accounts SET is_prime = FALSE WHERE is_prime IS NULL")
+        connection.exec_driver_sql("UPDATE users SET display_name = username WHERE display_name IS NULL OR trim(display_name) = ''")
 
 
 def ensure_account_unique_constraints() -> None:
@@ -282,9 +296,23 @@ def serialize_user(user: User) -> UserOut:
     return UserOut(
         id=user.id,
         username=user.username,
+        display_name=(user.display_name or user.username).strip(),
         email=user.email,
         has_password=bool(user.password_hash),
     )
+
+
+def format_user_label(user: User) -> str:
+    display_name = (user.display_name or user.username).strip() or user.username
+    return f"{display_name} ({user.username})"
+
+
+def is_online_status(status_value: str | None) -> bool:
+    return status_value not in {None, "", "Offline", "Unknown"}
+
+
+def is_account_online(account: SteamAccount) -> bool:
+    return is_online_status(account.online_status)
 
 
 def get_user_by_api_key(x_api_key: str, db: Session) -> User:
@@ -339,7 +367,7 @@ def format_remaining_time(expires_at: datetime | None) -> str | None:
         return None
 
     now = datetime.now(timezone.utc)
-    target = expires_at.replace(tzinfo=timezone.utc) if expires_at.tzinfo is None else expires_at
+    target = normalize_utc_datetime(expires_at)
     remaining_seconds = int((target - now).total_seconds())
     if remaining_seconds <= 0:
         return "Expired"
@@ -351,21 +379,36 @@ def format_remaining_time(expires_at: datetime | None) -> str | None:
     return f"{max(total_hours, 1)} hour(s)"
 
 
-def serialize_account(account: SteamAccount, *, pending_review_count: int = 0) -> SteamAccountOut:
+def normalize_utc_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+def serialize_account(
+    account: SteamAccount,
+    *,
+    pending_review_count: int = 0,
+    vac_live_fault_display: str | None = None,
+) -> SteamAccountOut:
     suggestions, suggested_ban_type = build_account_suggestions(account)
+    password_value = "" if is_account_online(account) else decrypt_account_password(account.password, settings.app_secret)
     payload = {
         "id": account.id,
         "owner_id": account.owner_id,
         "username": account.username,
-        "password": decrypt_account_password(account.password, settings.app_secret),
+        "password": password_value,
         "email": account.email,
         "steam_id64": account.steam_id64,
         "ban_status": account.ban_status,
         "ban_type": BanType(account.ban_type) if account.ban_type in BanType._value2member_map_ else BanType.VAC,
-        "vac_live_expires_at": account.vac_live_expires_at,
+        "vac_live_expires_at": normalize_utc_datetime(account.vac_live_expires_at),
         "vac_live_remaining": format_remaining_time(account.vac_live_expires_at),
+        "vac_live_fault_user_id": account.vac_live_fault_user_id,
+        "vac_live_fault_display": vac_live_fault_display,
         "matchmaking_ready": account.matchmaking_ready,
         "is_public": account.is_public,
+        "is_prime": account.is_prime,
         "avatar_url": account.avatar_url,
         "steam_profile_name": account.steam_profile_name,
         "online_status": account.online_status,
@@ -374,30 +417,67 @@ def serialize_account(account: SteamAccount, *, pending_review_count: int = 0) -
         "suggested_changes": suggestions,
         "suggested_ban_type": suggested_ban_type,
         "pending_review_count": pending_review_count,
-        "created_at": account.created_at,
+        "created_at": normalize_utc_datetime(account.created_at),
     }
     return SteamAccountOut.model_validate(payload)
 
 
-def serialize_suggestion(suggestion: AccountSuggestion, suggested_by_username: str) -> AccountSuggestionOut:
+def serialize_suggestion(suggestion: AccountSuggestion, users_by_id: dict[int, User]) -> AccountSuggestionOut:
     suggested_ban_type = None
     if suggestion.suggested_ban_type and suggestion.suggested_ban_type in BanType._value2member_map_:
         suggested_ban_type = BanType(suggestion.suggested_ban_type)
+
+    suggested_by = users_by_id.get(suggestion.suggested_by_id)
+    fault_user = users_by_id.get(suggestion.suggested_vac_live_fault_user_id or -1)
 
     return AccountSuggestionOut(
         id=suggestion.id,
         account_id=suggestion.account_id,
         suggested_by_id=suggestion.suggested_by_id,
-        suggested_by_username=suggested_by_username,
+        suggested_by_username=suggested_by.username if suggested_by else "unknown",
+        suggested_by_display_name=(suggested_by.display_name or suggested_by.username).strip() if suggested_by else "unknown",
         suggested_ban_type=suggested_ban_type,
         suggested_vac_live_value=suggestion.suggested_vac_live_value,
         suggested_vac_live_unit=suggestion.suggested_vac_live_unit if suggestion.suggested_vac_live_unit in {"hours", "days"} else None,
+        suggested_vac_live_fault_user_id=suggestion.suggested_vac_live_fault_user_id,
+        suggested_vac_live_fault_display=format_user_label(fault_user) if fault_user else None,
         suggested_matchmaking_ready=suggestion.suggested_matchmaking_ready,
         suggested_is_public=suggestion.suggested_is_public,
         note=suggestion.note,
         status=suggestion.status,
-        created_at=suggestion.created_at,
+        created_at=normalize_utc_datetime(suggestion.created_at),
     )
+
+
+def sync_vac_live_fault_record(db: Session, account: SteamAccount) -> None:
+    record = db.scalar(select(VacLiveFault).where(VacLiveFault.account_id == account.id))
+    expires_at = normalize_utc_datetime(account.vac_live_expires_at)
+    should_track = account.ban_type == BanType.VAC_LIVE.value and account.vac_live_fault_user_id is not None and expires_at is not None
+
+    if not should_track:
+        return
+
+    if record:
+        record.user_id = int(account.vac_live_fault_user_id)
+        record.ban_expires_at = expires_at.replace(tzinfo=None)
+        db.add(record)
+        return
+
+    db.add(
+        VacLiveFault(
+            account_id=account.id,
+            user_id=int(account.vac_live_fault_user_id),
+            ban_expires_at=expires_at.replace(tzinfo=None),
+        )
+    )
+
+
+def backfill_vac_live_fault_records() -> None:
+    with SessionLocal() as db:
+        accounts = db.scalars(select(SteamAccount).where(SteamAccount.ban_type == BanType.VAC_LIVE.value)).all()
+        for account in accounts:
+            sync_vac_live_fault_record(db, account)
+        db.commit()
 
 
 def build_account_suggestions(account: SteamAccount) -> tuple[list[str], BanType | None]:
@@ -440,7 +520,11 @@ PERSONA_STATE_LABELS = {
 def _resolve_steam_presence(player: dict[str, Any]) -> tuple[str, str | None]:
     game_name = player.get("gameextrainfo")
     if game_name:
-        return "InGame", str(game_name)
+        return "Playing", str(game_name)
+
+    game_id = player.get("gameid")
+    if game_id:
+        return "Playing", None
 
     raw_state = player.get("personastate", 0)
     try:
@@ -545,6 +629,7 @@ async def steam_sync_loop() -> None:
 @app.on_event("startup")
 async def startup_steam_sync() -> None:
     global steam_sync_task
+    backfill_vac_live_fault_records()
     if not settings.steam_api_key:
         return
     if steam_sync_task is None or steam_sync_task.done():
@@ -573,9 +658,11 @@ def create_account_record(
     steam_id: str | None = None,
     matchmaking_ready: bool,
     is_public: bool,
+    is_prime: bool,
     ban_type: BanType = BanType.NONE,
     vac_live_value: int | None = None,
     vac_live_unit: str | None = None,
+    vac_live_fault_user_id: int | None = None,
 ) -> SteamAccount:
     resolved_steam_id = steam_id.strip() if steam_id else None
     ban_status = BanStatus.CLEAN
@@ -596,9 +683,11 @@ def create_account_record(
         email=email,
         matchmaking_ready=matchmaking_ready,
         is_public=is_public,
+        is_prime=is_prime,
         ban_status=ban_status,
         ban_type=ban_type.value,
         vac_live_expires_at=vac_live_expires_at,
+        vac_live_fault_user_id=vac_live_fault_user_id if ban_type == BanType.VAC_LIVE else None,
         avatar_url=None,
         steam_profile_name=None,
         online_status=None,
@@ -657,6 +746,21 @@ def ensure_steam_id_unique_for_update(db: Session, *, steam_id: str, exclude_acc
     )
     if existing_steam_id is not None:
         raise HTTPException(status_code=409, detail="Steam ID already exists")
+
+
+def ensure_user_exists(db: Session, user_id: int | None, *, detail: str) -> None:
+    if user_id is None:
+        return
+    if db.get(User, user_id) is None:
+        raise HTTPException(status_code=400, detail=detail)
+
+
+def get_fault_display_map(db: Session, user_ids: list[int]) -> dict[int, str]:
+    valid_ids = sorted({user_id for user_id in user_ids if user_id})
+    if not valid_ids:
+        return {}
+    users = db.scalars(select(User).where(User.id.in_(valid_ids))).all()
+    return {user.id: format_user_label(user) for user in users}
 
 
 def is_oidc_auth_available() -> bool:
@@ -902,7 +1006,8 @@ def oidc_callback(
     if not user:
         preferred_username = claims.get("preferred_username") or claims.get("name") or f"oidc_{subject[-8:]}"
         email = claims.get("email")
-        user = User(username=preferred_username[:64], email=email, oidc_sub=subject)
+        username = preferred_username[:64]
+        user = User(username=username, display_name=username, email=email, oidc_sub=subject)
         db.add(user)
         db.commit()
         db.refresh(user)
@@ -930,7 +1035,12 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="Username or email already exists")
 
-    user = User(username=payload.username, email=payload.email, password_hash=hash_password(payload.password))
+    user = User(
+        username=payload.username,
+        display_name=payload.username,
+        email=payload.email,
+        password_hash=hash_password(payload.password),
+    )
     db.add(user)
     db.flush()
 
@@ -1006,6 +1116,64 @@ def auth_me(user: User = Depends(get_current_user)):
     return serialize_user(user)
 
 
+@app.patch("/auth/me", response_model=UserOut)
+def update_profile(
+    payload: UserProfileUpdateRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    user.display_name = payload.display_name.strip()
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return serialize_user(user)
+
+
+@app.get("/users", response_model=list[UserChoiceOut])
+def list_users(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _ = user
+    users = db.scalars(select(User).order_by(func.lower(User.display_name), func.lower(User.username))).all()
+    return [
+        UserChoiceOut(
+            id=entry.id,
+            username=entry.username,
+            display_name=(entry.display_name or entry.username).strip(),
+        )
+        for entry in users
+    ]
+
+
+@app.get("/leaderboard/vac-live-faults", response_model=list[VacLiveFaultLeaderboardEntryOut])
+def vac_live_fault_leaderboard(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _ = user
+    rows = db.execute(
+        select(VacLiveFault, User, SteamAccount)
+        .join(User, User.id == VacLiveFault.user_id)
+        .join(SteamAccount, SteamAccount.id == VacLiveFault.account_id)
+        .order_by(VacLiveFault.updated_at.desc(), VacLiveFault.created_at.desc())
+    ).all()
+
+    grouped: dict[int, VacLiveFaultLeaderboardEntryOut] = {}
+    for fault_record, fault_user, account in rows:
+        existing = grouped.get(fault_user.id)
+        if existing is None:
+            existing = VacLiveFaultLeaderboardEntryOut(
+                user_id=fault_user.id,
+                username=fault_user.username,
+                display_name=(fault_user.display_name or fault_user.username).strip(),
+                label=format_user_label(fault_user),
+                total_faults=0,
+                accounts=[],
+            )
+            grouped[fault_user.id] = existing
+
+        existing.total_faults += 1
+        if account.username not in existing.accounts:
+            existing.accounts.append(account.username)
+
+    return sorted(grouped.values(), key=lambda entry: (-entry.total_faults, entry.label.lower()))
+
+
 @app.post("/auth/change-password")
 def change_password(payload: ChangePasswordRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if not user.password_hash:
@@ -1030,6 +1198,7 @@ async def create_account(
     ensure_account_identity_unique(db, username=payload.username, email=payload.email)
     if payload.steam_id:
         ensure_steam_id_unique(db, steam_id=payload.steam_id)
+    ensure_user_exists(db, payload.vac_live_fault_user_id, detail="Selected VAC Live fault user does not exist")
 
     account = create_account_record(
         actor_id=actor.id,
@@ -1039,14 +1208,19 @@ async def create_account(
         steam_id=payload.steam_id,
         matchmaking_ready=payload.matchmaking_ready,
         is_public=payload.is_public,
+        is_prime=payload.is_prime,
         ban_type=payload.ban_type,
         vac_live_value=payload.vac_live_value,
         vac_live_unit=payload.vac_live_unit,
+        vac_live_fault_user_id=payload.vac_live_fault_user_id,
     )
     db.add(account)
+    db.flush()
+    sync_vac_live_fault_record(db, account)
     db.commit()
     db.refresh(account)
-    return serialize_account(account)
+    fault_display_map = get_fault_display_map(db, [account.vac_live_fault_user_id or 0])
+    return serialize_account(account, vac_live_fault_display=fault_display_map.get(account.vac_live_fault_user_id or 0))
 
 
 @app.post("/accounts/mass-import", response_model=MassImportResponse)
@@ -1138,9 +1312,11 @@ def mass_import_accounts(
                 steam_id=steam_id,
                 matchmaking_ready=False,
                 is_public=payload.is_public,
+                is_prime=payload.is_prime,
                 ban_type=BanType.NONE,
             )
             db.add(account)
+            sync_vac_live_fault_record(db, account)
             db.commit()
             created += 1
             seen_usernames.add(normalized_username)
@@ -1170,6 +1346,7 @@ def list_accounts(
 
     accounts = db.scalars(query).all()
     account_ids = [account.id for account in accounts]
+    fault_display_map = get_fault_display_map(db, [account.vac_live_fault_user_id or 0 for account in accounts])
     pending_counts: dict[int, int] = {}
     if account_ids:
         count_rows = db.execute(
@@ -1182,7 +1359,14 @@ def list_accounts(
         ).all()
         pending_counts = {int(account_id): int(count) for account_id, count in count_rows}
 
-    return [serialize_account(account, pending_review_count=pending_counts.get(account.id, 0)) for account in accounts]
+    return [
+        serialize_account(
+            account,
+            pending_review_count=pending_counts.get(account.id, 0),
+            vac_live_fault_display=fault_display_map.get(account.vac_live_fault_user_id or 0),
+        )
+        for account in accounts
+    ]
 
 
 @app.post("/accounts/{account_id}/suggestions", response_model=AccountSuggestionOut, status_code=status.HTTP_201_CREATED)
@@ -1200,6 +1384,7 @@ def create_account_suggestion(
         raise HTTPException(status_code=400, detail="Owners cannot suggest changes for their own account")
     if not account.is_public:
         raise HTTPException(status_code=403, detail="Only public accounts can receive external suggestions")
+    ensure_user_exists(db, payload.suggested_vac_live_fault_user_id, detail="Selected VAC Live fault user does not exist")
 
     suggestion = AccountSuggestion(
         account_id=account.id,
@@ -1207,6 +1392,7 @@ def create_account_suggestion(
         suggested_ban_type=payload.suggested_ban_type.value if payload.suggested_ban_type else None,
         suggested_vac_live_value=payload.suggested_vac_live_value,
         suggested_vac_live_unit=payload.suggested_vac_live_unit,
+        suggested_vac_live_fault_user_id=payload.suggested_vac_live_fault_user_id,
         suggested_matchmaking_ready=payload.suggested_matchmaking_ready,
         suggested_is_public=payload.suggested_is_public,
         note=payload.note.strip() if payload.note else None,
@@ -1215,7 +1401,7 @@ def create_account_suggestion(
     db.add(suggestion)
     db.commit()
     db.refresh(suggestion)
-    return serialize_suggestion(suggestion, suggested_by_username=user.username)
+    return serialize_suggestion(suggestion, {user.id: user})
 
 
 @app.get("/accounts/{account_id}/suggestions", response_model=list[AccountSuggestionOut])
@@ -1238,10 +1424,20 @@ def list_account_suggestions(
     if not suggestions:
         return []
 
-    suggester_ids = sorted({suggestion.suggested_by_id for suggestion in suggestions})
-    suggesters = db.scalars(select(User).where(User.id.in_(suggester_ids))).all()
-    username_by_id = {entry.id: entry.username for entry in suggesters}
-    return [serialize_suggestion(suggestion, username_by_id.get(suggestion.suggested_by_id, "unknown")) for suggestion in suggestions]
+    related_user_ids = sorted(
+        {
+            suggestion.suggested_by_id
+            for suggestion in suggestions
+        }
+        | {
+            suggestion.suggested_vac_live_fault_user_id
+            for suggestion in suggestions
+            if suggestion.suggested_vac_live_fault_user_id is not None
+        }
+    )
+    related_users = db.scalars(select(User).where(User.id.in_(related_user_ids))).all()
+    users_by_id = {entry.id: entry for entry in related_users}
+    return [serialize_suggestion(suggestion, users_by_id) for suggestion in suggestions]
 
 
 @app.post("/accounts/{account_id}/suggestions/{suggestion_id}/resolve", response_model=SteamAccountOut)
@@ -1270,15 +1466,18 @@ def resolve_account_suggestion(
             if suggestion.suggested_ban_type == BanType.NONE.value:
                 account.ban_status = BanStatus.CLEAN
                 account.vac_live_expires_at = None
+                account.vac_live_fault_user_id = None
             elif suggestion.suggested_ban_type in {BanType.VAC.value, BanType.GAME_BANNED.value}:
                 account.ban_status = BanStatus.BAN
                 account.vac_live_expires_at = None
+                account.vac_live_fault_user_id = None
             elif suggestion.suggested_ban_type == BanType.VAC_LIVE.value:
                 amount = suggestion.suggested_vac_live_value or 20
                 unit = suggestion.suggested_vac_live_unit or "hours"
                 delta = timedelta(hours=amount) if unit == "hours" else timedelta(days=amount)
                 account.ban_status = BanStatus.VAC_LIVE
                 account.vac_live_expires_at = datetime.now(timezone.utc) + delta
+                account.vac_live_fault_user_id = suggestion.suggested_vac_live_fault_user_id
         if suggestion.suggested_matchmaking_ready is not None:
             account.matchmaking_ready = suggestion.suggested_matchmaking_ready
         if suggestion.suggested_is_public is not None:
@@ -1289,6 +1488,7 @@ def resolve_account_suggestion(
     suggestion.resolved_at = datetime.now(timezone.utc)
     db.add(account)
     db.add(suggestion)
+    sync_vac_live_fault_record(db, account)
     db.commit()
     db.refresh(account)
 
@@ -1298,7 +1498,12 @@ def resolve_account_suggestion(
             AccountSuggestion.status == SuggestionStatus.PENDING,
         )
     )
-    return serialize_account(account, pending_review_count=int(pending_count or 0))
+    fault_display_map = get_fault_display_map(db, [account.vac_live_fault_user_id or 0])
+    return serialize_account(
+        account,
+        pending_review_count=int(pending_count or 0),
+        vac_live_fault_display=fault_display_map.get(account.vac_live_fault_user_id or 0),
+    )
 
 
 @app.put("/accounts/{account_id}", response_model=SteamAccountOut)
@@ -1322,32 +1527,40 @@ def update_account(
     )
     if payload.steam_id:
         ensure_steam_id_unique_for_update(db, steam_id=payload.steam_id, exclude_account_id=account.id)
+    ensure_user_exists(db, payload.vac_live_fault_user_id, detail="Selected VAC Live fault user does not exist")
 
     account.username = payload.username
-    account.password = encrypt_account_password(payload.password, settings.app_secret)
+    if payload.password:
+        account.password = encrypt_account_password(payload.password, settings.app_secret)
     account.email = payload.email
     if payload.steam_id:
         account.steam_id64 = payload.steam_id.strip()
     account.matchmaking_ready = payload.matchmaking_ready
     account.is_public = payload.is_public
+    account.is_prime = payload.is_prime
     account.ban_type = payload.ban_type.value
 
     if payload.ban_type == BanType.NONE:
         account.ban_status = BanStatus.CLEAN
         account.vac_live_expires_at = None
+        account.vac_live_fault_user_id = None
     elif payload.ban_type in {BanType.VAC, BanType.GAME_BANNED}:
         account.ban_status = BanStatus.BAN
         account.vac_live_expires_at = None
+        account.vac_live_fault_user_id = None
     else:
         amount = payload.vac_live_value or 0
         delta = timedelta(hours=amount) if payload.vac_live_unit == "hours" else timedelta(days=amount)
         account.ban_status = BanStatus.VAC_LIVE
         account.vac_live_expires_at = datetime.now(timezone.utc) + delta
+        account.vac_live_fault_user_id = payload.vac_live_fault_user_id
 
     db.add(account)
+    sync_vac_live_fault_record(db, account)
     db.commit()
     db.refresh(account)
-    return serialize_account(account)
+    fault_display_map = get_fault_display_map(db, [account.vac_live_fault_user_id or 0])
+    return serialize_account(account, vac_live_fault_display=fault_display_map.get(account.vac_live_fault_user_id or 0))
 
 
 @app.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1404,6 +1617,8 @@ async def shiro_login(
     is_owner = account.owner_id == actor.id
     if not is_owner and not account.is_public:
         raise HTTPException(status_code=403, detail="Shiro login is only available for the account owner or public accounts")
+    if is_account_online(account):
+        raise HTTPException(status_code=409, detail="Shiro login is unavailable while the account is online")
 
     plaintext_password = decrypt_account_password(account.password, settings.app_secret)
 
@@ -1413,6 +1628,7 @@ async def shiro_login(
     # Create a cryptographically random one-time token.
     token = secrets.token_urlsafe(32)
     _shiro_tokens[token] = {
+        "account_id": account.id,
         "account_name": account.username,
         "password": plaintext_password,
         "persona_name": account.steam_profile_name or account.username,
@@ -1439,6 +1655,13 @@ async def shiro_credentials(token: str):
     creds = _shiro_tokens.pop(token, None)
     if not creds:
         raise HTTPException(status_code=404, detail="Token not found or expired")
+
+    with SessionLocal() as db:
+        account = db.get(SteamAccount, int(creds.get("account_id", 0) or 0))
+        if not account:
+            raise HTTPException(status_code=404, detail="Account not found")
+        if is_account_online(account):
+            raise HTTPException(status_code=409, detail="Credentials are unavailable while the account is online")
 
     return {"account_name": creds["account_name"], "password": creds["password"], "persona_name": creds.get("persona_name", creds["account_name"])}
 

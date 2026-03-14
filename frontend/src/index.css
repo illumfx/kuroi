@@ -6,6 +6,69 @@ body {
   @apply bg-zinc-950 text-zinc-100 antialiased;
 }
 
+@keyframes prime-gold-glow {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 6px rgba(251, 191, 36, 0.35));
+    text-shadow:
+      0 0 8px rgba(251, 191, 36, 0.26),
+      0 0 16px rgba(245, 158, 11, 0.14);
+  }
+
+  50% {
+    filter: drop-shadow(0 0 10px rgba(250, 204, 21, 0.65));
+    text-shadow:
+      0 0 12px rgba(251, 191, 36, 0.52),
+      0 0 22px rgba(245, 158, 11, 0.3),
+      0 0 34px rgba(250, 204, 21, 0.2);
+  }
+}
+
+@keyframes prime-gold-aura {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: scale(0.96);
+    box-shadow:
+      0 0 12px rgba(245, 158, 11, 0.18),
+      0 0 22px rgba(250, 204, 21, 0.1);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.03);
+    box-shadow:
+      0 0 18px rgba(250, 204, 21, 0.28),
+      0 0 34px rgba(245, 158, 11, 0.16);
+  }
+}
+
+@keyframes prime-gold-shimmer {
+  0% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes sticky-actions-overlap-in {
+  0% {
+    box-shadow: inset 0 0 0 rgba(0, 0, 0, 0), -2px 0 0 rgba(255, 255, 255, 0);
+    transform: translateX(2px);
+  }
+
+  100% {
+    box-shadow: inset 18px 0 28px rgba(0, 0, 0, 0.18), -1px 0 0 rgba(255, 255, 255, 0.06);
+    transform: translateX(0);
+  }
+}
+
 @layer components {
   .anime-panel {
     @apply border border-zinc-700/60 bg-zinc-900/60 shadow-2xl shadow-indigo-950/30 backdrop-blur-sm;
@@ -35,5 +98,87 @@ body {
     background-repeat: no-repeat;
     background-position: center, center;
     background-size: 0.7rem 0.7rem, cover;
+  }
+
+  .prime-name-aura {
+    position: relative;
+    display: inline-flex;
+    max-width: 100%;
+    align-items: center;
+    justify-content: center;
+    padding: 0.14rem 0.42rem 0.16rem;
+    overflow: visible;
+    isolation: isolate;
+  }
+
+  .prime-name-aura::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: calc(100% + 0.9rem);
+    aspect-ratio: 1 / 1;
+    z-index: 0;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    background: radial-gradient(circle at 50% 50%, rgba(255, 245, 180, 0.28) 0%, rgba(251, 191, 36, 0.18) 30%, rgba(245, 158, 11, 0.08) 54%, rgba(245, 158, 11, 0) 78%);
+    filter: blur(9px);
+    animation: prime-gold-aura 2.8s ease-in-out infinite;
+  }
+
+  .prime-name-text {
+    position: relative;
+    z-index: 1;
+    display: inline-block;
+    background-image: linear-gradient(110deg, rgba(146, 64, 14, 1) 0%, rgba(251, 191, 36, 1) 22%, rgba(255, 251, 235, 1) 48%, rgba(250, 204, 21, 1) 72%, rgba(146, 64, 14, 1) 100%);
+    background-size: 220% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    animation:
+      prime-gold-glow 2.6s ease-in-out infinite,
+      prime-gold-shimmer 3.6s linear infinite;
+  }
+
+  .sticky-actions-shell {
+    transition:
+      background 200ms ease,
+      box-shadow 200ms ease,
+      color 200ms ease,
+      backdrop-filter 200ms ease,
+      transform 200ms ease;
+    will-change: background, box-shadow, transform;
+  }
+
+  .sticky-actions-label {
+    position: relative;
+    z-index: 1;
+    transition: color 180ms ease, text-shadow 180ms ease, opacity 180ms ease;
+  }
+
+  .sticky-actions-label-active {
+    color: rgb(244 244 245 / 1);
+    text-shadow:
+      0 0 10px rgba(24, 24, 27, 0.95),
+      0 0 18px rgba(9, 9, 11, 0.65);
+  }
+
+  .sticky-actions-overlap {
+    animation: sticky-actions-overlap-in 220ms ease;
+  }
+
+  .sticky-actions-header {
+    background: linear-gradient(to left, rgba(0, 0, 0, 0.92) 0%, rgba(0, 0, 0, 0.78) 50%, rgba(0, 0, 0, 0.34) 78%, rgba(0, 0, 0, 0) 100%);
+    backdrop-filter: blur(14px) brightness(0.24) saturate(0.22);
+    box-shadow: inset 26px 0 40px rgba(0, 0, 0, 0.32);
+  }
+
+  .sticky-actions-cell {
+    background: linear-gradient(to left, rgba(0, 0, 0, 0.94) 0%, rgba(0, 0, 0, 0.82) 48%, rgba(0, 0, 0, 0.38) 78%, rgba(0, 0, 0, 0) 100%);
+    backdrop-filter: blur(14px) brightness(0.18) saturate(0.18);
+    box-shadow:
+      inset 28px 0 44px rgba(0, 0, 0, 0.36),
+      -1px 0 0 rgba(255, 255, 255, 0.03);
   }
 }

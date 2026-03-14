@@ -11,6 +11,7 @@ from .models import BanStatus, BanType, SuggestionStatus
 class UserOut(BaseModel):
     id: int
     username: str
+    display_name: str
     email: str | None = None
     has_password: bool = False
 
@@ -39,6 +40,25 @@ class LocalLoginRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     current_password: str = Field(min_length=1, max_length=128)
     new_password: str = Field(min_length=8, max_length=128)
+
+
+class UserProfileUpdateRequest(BaseModel):
+    display_name: str = Field(min_length=1, max_length=64)
+
+
+class UserChoiceOut(BaseModel):
+    id: int
+    username: str
+    display_name: str
+
+
+class VacLiveFaultLeaderboardEntryOut(BaseModel):
+    user_id: int
+    username: str
+    display_name: str
+    label: str
+    total_faults: int
+    accounts: list[str]
 
 
 class InviteCreateRequest(BaseModel):
@@ -71,8 +91,10 @@ class SteamAccountCreate(BaseModel):
     ban_type: BanType = BanType.NONE
     vac_live_value: int | None = Field(default=None, ge=1, le=365)
     vac_live_unit: Literal["hours", "days"] | None = None
+    vac_live_fault_user_id: int | None = Field(default=None, ge=1)
     matchmaking_ready: bool = False
     is_public: bool = False
+    is_prime: bool = False
 
     @model_validator(mode="after")
     def validate_vac_live_fields(self):
@@ -82,19 +104,22 @@ class SteamAccountCreate(BaseModel):
         else:
             self.vac_live_value = None
             self.vac_live_unit = None
+            self.vac_live_fault_user_id = None
         return self
 
 
 class SteamAccountUpdate(BaseModel):
     username: str = Field(min_length=1, max_length=128)
-    password: str = Field(min_length=1, max_length=255)
+    password: str | None = Field(default=None, min_length=1, max_length=255)
     email: EmailStr
     steam_id: str | None = Field(default=None, min_length=17, max_length=17, pattern=r"^\d{17}$")
     ban_type: BanType = BanType.NONE
     vac_live_value: int | None = Field(default=None, ge=1, le=365)
     vac_live_unit: Literal["hours", "days"] | None = None
+    vac_live_fault_user_id: int | None = Field(default=None, ge=1)
     matchmaking_ready: bool = False
     is_public: bool = False
+    is_prime: bool = False
 
     @model_validator(mode="after")
     def validate_vac_live_fields(self):
@@ -104,6 +129,7 @@ class SteamAccountUpdate(BaseModel):
         else:
             self.vac_live_value = None
             self.vac_live_unit = None
+            self.vac_live_fault_user_id = None
         return self
 
 
@@ -118,8 +144,11 @@ class SteamAccountOut(BaseModel):
     ban_type: BanType
     vac_live_expires_at: datetime | None = None
     vac_live_remaining: str | None = None
+    vac_live_fault_user_id: int | None = None
+    vac_live_fault_display: str | None = None
     matchmaking_ready: bool
     is_public: bool
+    is_prime: bool
     avatar_url: str | None = None
     steam_profile_name: str | None = None
     online_status: str | None = None
@@ -137,6 +166,7 @@ class SteamAccountOut(BaseModel):
 class MassImportRequest(BaseModel):
     content: str = Field(min_length=1)
     is_public: bool = False
+    is_prime: bool = False
 
 
 class MassImportError(BaseModel):
@@ -155,6 +185,7 @@ class AccountSuggestionCreate(BaseModel):
     suggested_ban_type: BanType | None = None
     suggested_vac_live_value: int | None = Field(default=None, ge=1, le=365)
     suggested_vac_live_unit: Literal["hours", "days"] | None = None
+    suggested_vac_live_fault_user_id: int | None = Field(default=None, ge=1)
     suggested_matchmaking_ready: bool | None = None
     suggested_is_public: bool | None = None
     note: str | None = Field(default=None, min_length=1, max_length=500)
@@ -174,6 +205,7 @@ class AccountSuggestionCreate(BaseModel):
         else:
             self.suggested_vac_live_value = None
             self.suggested_vac_live_unit = None
+            self.suggested_vac_live_fault_user_id = None
         return self
 
 
@@ -186,9 +218,12 @@ class AccountSuggestionOut(BaseModel):
     account_id: int
     suggested_by_id: int
     suggested_by_username: str
+    suggested_by_display_name: str
     suggested_ban_type: BanType | None = None
     suggested_vac_live_value: int | None = None
     suggested_vac_live_unit: Literal["hours", "days"] | None = None
+    suggested_vac_live_fault_user_id: int | None = None
+    suggested_vac_live_fault_display: str | None = None
     suggested_matchmaking_ready: bool | None = None
     suggested_is_public: bool | None = None
     note: str | None = None
