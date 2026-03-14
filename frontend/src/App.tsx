@@ -25,6 +25,7 @@ type Account = {
   ban_type: BanType;
   vac_live_expires_at?: string | null;
   vac_live_remaining?: string | null;
+  server_now?: string | null;
   vac_live_fault_user_id?: number | null;
   vac_live_fault_display?: string | null;
   matchmaking_ready: boolean;
@@ -257,6 +258,7 @@ function App() {
 
   const [generatedApiKey, setGeneratedApiKey] = useState("");
   const [generatedInviteLink, setGeneratedInviteLink] = useState("");
+  const [serverClockOffsetMs, setServerClockOffsetMs] = useState(0);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
   const [editingAccountId, setEditingAccountId] = useState<number | null>(null);
   const [suggestAccount, setSuggestAccount] = useState<Account | null>(null);
@@ -360,6 +362,8 @@ function App() {
     setAccounts([]);
     setGeneratedApiKey("");
     setGeneratedInviteLink("");
+    setServerClockOffsetMs(0);
+    setCountdownNow(Date.now());
     setSelectedAccountIds(new Set());
     setCurrentUserId(null);
     setCurrentUsername("");
@@ -772,6 +776,12 @@ function App() {
     const query = params.toString() ? `?${params.toString()}` : "";
     try {
       const data = await apiFetch<Account[]>(`/accounts${query}`, token);
+      const serverNow = data.reduce<number | null>((found, account) => found ?? parseApiDate(account.server_now), null);
+      if (serverNow !== null) {
+        const offset = serverNow - Date.now();
+        setServerClockOffsetMs(offset);
+        setCountdownNow(serverNow);
+      }
       setAccounts(data);
       if (resetPage) {
         setCurrentPage(1);
@@ -913,14 +923,16 @@ function App() {
       return;
     }
 
+    setCountdownNow(Date.now() + serverClockOffsetMs);
+
     const intervalId = window.setInterval(() => {
-      setCountdownNow(Date.now());
+      setCountdownNow(Date.now() + serverClockOffsetMs);
     }, 1000);
 
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [isLoggedIn]);
+  }, [isLoggedIn, serverClockOffsetMs]);
 
   const handleLocalLogin = async (event: FormEvent) => {
     event.preventDefault();

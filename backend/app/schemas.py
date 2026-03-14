@@ -144,6 +144,7 @@ class SteamAccountOut(BaseModel):
     ban_type: BanType
     vac_live_expires_at: datetime | None = None
     vac_live_remaining: str | None = None
+    server_now: datetime | None = None
     vac_live_fault_user_id: int | None = None
     vac_live_fault_display: str | None = None
     matchmaking_ready: bool

@@ -362,11 +362,11 @@ async def fetch_steam_avatar(steam_id64: str) -> str | None:
         return players[0].get("avatarfull")
 
 
-def format_remaining_time(expires_at: datetime | None) -> str | None:
+def format_remaining_time(expires_at: datetime | None, *, reference_time: datetime | None = None) -> str | None:
     if not expires_at:
         return None
 
-    now = datetime.now(timezone.utc)
+    now = normalize_utc_datetime(reference_time) or datetime.now(timezone.utc)
     target = normalize_utc_datetime(expires_at)
     remaining_seconds = int((target - now).total_seconds())
     if remaining_seconds <= 0:
@@ -390,9 +390,11 @@ def serialize_account(
     *,
     pending_review_count: int = 0,
     vac_live_fault_display: str | None = None,
+    server_now: datetime | None = None,
 ) -> SteamAccountOut:
     suggestions, suggested_ban_type = build_account_suggestions(account)
     password_value = "" if is_account_online(account) else decrypt_account_password(account.password, settings.app_secret)
+    current_server_time = normalize_utc_datetime(server_now) or datetime.now(timezone.utc)
     payload = {
         "id": account.id,
         "owner_id": account.owner_id,
@@ -403,7 +405,8 @@ def serialize_account(
         "ban_status": account.ban_status,
         "ban_type": BanType(account.ban_type) if account.ban_type in BanType._value2member_map_ else BanType.VAC,
         "vac_live_expires_at": normalize_utc_datetime(account.vac_live_expires_at),
-        "vac_live_remaining": format_remaining_time(account.vac_live_expires_at),
+        "vac_live_remaining": format_remaining_time(account.vac_live_expires_at, reference_time=current_server_time),
+        "server_now": current_server_time,
         "vac_live_fault_user_id": account.vac_live_fault_user_id,
         "vac_live_fault_display": vac_live_fault_display,
         "matchmaking_ready": account.matchmaking_ready,
@@ -1359,11 +1362,14 @@ def list_accounts(
         ).all()
         pending_counts = {int(account_id): int(count) for account_id, count in count_rows}
 
+    server_now = datetime.now(timezone.utc)
+
     return [
         serialize_account(
             account,
             pending_review_count=pending_counts.get(account.id, 0),
             vac_live_fault_display=fault_display_map.get(account.vac_live_fault_user_id or 0),
+            server_now=server_now,
         )
         for account in accounts
     ]
