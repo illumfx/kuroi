@@ -165,6 +165,37 @@ def ensure_schema_extensions() -> None:
             if "suggested_vac_live_fault_user_id" not in suggestion_columns:
                 connection.exec_driver_sql("ALTER TABLE account_suggestions ADD COLUMN suggested_vac_live_fault_user_id INTEGER")
 
+        if "vac_live_faults" in table_names and engine.dialect.name == "sqlite":
+            table_sql = connection.exec_driver_sql(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'vac_live_faults'"
+            ).scalar()
+            normalized_table_sql = str(table_sql or "").upper()
+            if "UNIQUE" in normalized_table_sql and "ACCOUNT_ID" in normalized_table_sql:
+                connection.exec_driver_sql(
+                    "CREATE TABLE vac_live_faults__new ("
+                    "id INTEGER NOT NULL PRIMARY KEY, "
+                    "account_id INTEGER NOT NULL, "
+                    "user_id INTEGER NOT NULL, "
+                    "ban_expires_at TIMESTAMP NOT NULL, "
+                    "created_at TIMESTAMP, "
+                    "updated_at TIMESTAMP, "
+                    "FOREIGN KEY(account_id) REFERENCES steam_accounts (id), "
+                    "FOREIGN KEY(user_id) REFERENCES users (id)"
+                    ")"
+                )
+                connection.exec_driver_sql(
+                    "INSERT INTO vac_live_faults__new (id, account_id, user_id, ban_expires_at, created_at, updated_at) "
+                    "SELECT id, account_id, user_id, ban_expires_at, created_at, updated_at FROM vac_live_faults"
+                )
+                connection.exec_driver_sql("DROP TABLE vac_live_faults")
+                connection.exec_driver_sql("ALTER TABLE vac_live_faults__new RENAME TO vac_live_faults")
+                connection.exec_driver_sql(
+                    "CREATE INDEX IF NOT EXISTS ix_vac_live_faults_account_id ON vac_live_faults (account_id)"
+                )
+                connection.exec_driver_sql(
+                    "CREATE INDEX IF NOT EXISTS ix_vac_live_faults_user_id ON vac_live_faults (user_id)"
+                )
+
         if settings.steam_id_legacy_cleanup_enabled:
             connection.execute(
                 text(
@@ -390,6 +421,9 @@ def serialize_account(
     *,
     pending_review_count: int = 0,
     vac_live_fault_display: str | None = None,
+    vac_live_fault_count: int = 0,
+    suggested_next_vac_live_value: int = 20,
+    suggested_next_vac_live_unit: str = "hours",
     server_now: datetime | None = None,
 ) -> SteamAccountOut:
     suggestions, suggested_ban_type = build_account_suggestions(account)
@@ -409,6 +443,9 @@ def serialize_account(
         "server_now": current_server_time,
         "vac_live_fault_user_id": account.vac_live_fault_user_id,
         "vac_live_fault_display": vac_live_fault_display,
+        "vac_live_fault_count": vac_live_fault_count,
+        "suggested_next_vac_live_value": suggested_next_vac_live_value,
+        "suggested_next_vac_live_unit": suggested_next_vac_live_unit,
         "matchmaking_ready": account.matchmaking_ready,
         "is_public": account.is_public,
         "is_prime": account.is_prime,
@@ -453,24 +490,27 @@ def serialize_suggestion(suggestion: AccountSuggestion, users_by_id: dict[int, U
 
 
 def sync_vac_live_fault_record(db: Session, account: SteamAccount) -> None:
-    record = db.scalar(select(VacLiveFault).where(VacLiveFault.account_id == account.id))
     expires_at = normalize_utc_datetime(account.vac_live_expires_at)
     should_track = account.ban_type == BanType.VAC_LIVE.value and account.vac_live_fault_user_id is not None and expires_at is not None
 
     if not should_track:
         return
 
-    if record:
-        record.user_id = int(account.vac_live_fault_user_id)
-        record.ban_expires_at = expires_at.replace(tzinfo=None)
-        db.add(record)
+    expires_at_naive = expires_at.replace(tzinfo=None)
+    latest_record = db.scalar(
+        select(VacLiveFault)
+        .where(VacLiveFault.account_id == account.id)
+        .order_by(VacLiveFault.created_at.desc(), VacLiveFault.id.desc())
+        .limit(1)
+    )
+    if latest_record and latest_record.user_id == int(account.vac_live_fault_user_id) and latest_record.ban_expires_at == expires_at_naive:
         return
 
     db.add(
         VacLiveFault(
             account_id=account.id,
             user_id=int(account.vac_live_fault_user_id),
-            ban_expires_at=expires_at.replace(tzinfo=None),
+            ban_expires_at=expires_at_naive,
         )
     )
 
@@ -481,6 +521,20 @@ def backfill_vac_live_fault_records() -> None:
         for account in accounts:
             sync_vac_live_fault_record(db, account)
         db.commit()
+
+
+VAC_LIVE_SUGGESTION_STEPS: list[tuple[int, str]] = [
+    (20, "hours"),
+    (7, "days"),
+    (31, "days"),
+    (180, "days"),
+]
+
+
+def resolve_next_vac_live_duration(fault_count: int) -> tuple[int, str]:
+    clamped_fault_count = max(fault_count, 0)
+    step_index = min(clamped_fault_count, len(VAC_LIVE_SUGGESTION_STEPS) - 1)
+    return VAC_LIVE_SUGGESTION_STEPS[step_index]
 
 
 def build_account_suggestions(account: SteamAccount) -> tuple[list[str], BanType | None]:
@@ -1351,6 +1405,7 @@ def list_accounts(
     account_ids = [account.id for account in accounts]
     fault_display_map = get_fault_display_map(db, [account.vac_live_fault_user_id or 0 for account in accounts])
     pending_counts: dict[int, int] = {}
+    fault_counts: dict[int, int] = {}
     if account_ids:
         count_rows = db.execute(
             select(AccountSuggestion.account_id, func.count(AccountSuggestion.id))
@@ -1362,6 +1417,13 @@ def list_accounts(
         ).all()
         pending_counts = {int(account_id): int(count) for account_id, count in count_rows}
 
+        fault_count_rows = db.execute(
+            select(VacLiveFault.account_id, func.count(VacLiveFault.id))
+            .where(VacLiveFault.account_id.in_(account_ids))
+            .group_by(VacLiveFault.account_id)
+        ).all()
+        fault_counts = {int(account_id): int(count) for account_id, count in fault_count_rows}
+
     server_now = datetime.now(timezone.utc)
 
     return [
@@ -1369,6 +1431,9 @@ def list_accounts(
             account,
             pending_review_count=pending_counts.get(account.id, 0),
             vac_live_fault_display=fault_display_map.get(account.vac_live_fault_user_id or 0),
+            vac_live_fault_count=fault_counts.get(account.id, 0),
+            suggested_next_vac_live_value=resolve_next_vac_live_duration(fault_counts.get(account.id, 0))[0],
+            suggested_next_vac_live_unit=resolve_next_vac_live_duration(fault_counts.get(account.id, 0))[1],
             server_now=server_now,
         )
         for account in accounts
@@ -1392,12 +1457,20 @@ def create_account_suggestion(
         raise HTTPException(status_code=403, detail="Only public accounts can receive external suggestions")
     ensure_user_exists(db, payload.suggested_vac_live_fault_user_id, detail="Selected VAC Live fault user does not exist")
 
+    suggested_vac_live_value = payload.suggested_vac_live_value
+    suggested_vac_live_unit = payload.suggested_vac_live_unit
+    if payload.suggested_ban_type == BanType.VAC_LIVE and (suggested_vac_live_value is None or suggested_vac_live_unit is None):
+        account_fault_count = int(
+            db.scalar(select(func.count(VacLiveFault.id)).where(VacLiveFault.account_id == account.id)) or 0
+        )
+        suggested_vac_live_value, suggested_vac_live_unit = resolve_next_vac_live_duration(account_fault_count)
+
     suggestion = AccountSuggestion(
         account_id=account.id,
         suggested_by_id=user.id,
         suggested_ban_type=payload.suggested_ban_type.value if payload.suggested_ban_type else None,
-        suggested_vac_live_value=payload.suggested_vac_live_value,
-        suggested_vac_live_unit=payload.suggested_vac_live_unit,
+        suggested_vac_live_value=suggested_vac_live_value,
+        suggested_vac_live_unit=suggested_vac_live_unit,
         suggested_vac_live_fault_user_id=payload.suggested_vac_live_fault_user_id,
         suggested_matchmaking_ready=payload.suggested_matchmaking_ready,
         suggested_is_public=payload.suggested_is_public,

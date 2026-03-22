@@ -28,6 +28,9 @@ type Account = {
   server_now?: string | null;
   vac_live_fault_user_id?: number | null;
   vac_live_fault_display?: string | null;
+  vac_live_fault_count?: number;
+  suggested_next_vac_live_value?: number;
+  suggested_next_vac_live_unit?: "hours" | "days";
   matchmaking_ready: boolean;
   is_public: boolean;
   is_prime: boolean;
@@ -486,8 +489,12 @@ function App() {
 
     if (sortOption === "mm_ready") {
       return items.sort((a, b) => {
-        if (a.matchmaking_ready !== b.matchmaking_ready) {
-          return Number(b.matchmaking_ready) - Number(a.matchmaking_ready);
+        const aIsBanned = a.ban_type !== "None";
+        const bIsBanned = b.ban_type !== "None";
+        const aRank = a.matchmaking_ready ? (aIsBanned ? 1 : 0) : aIsBanned ? 3 : 2;
+        const bRank = b.matchmaking_ready ? (bIsBanned ? 1 : 0) : bIsBanned ? 3 : 2;
+        if (aRank !== bRank) {
+          return aRank - bRank;
         }
         return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
       });
@@ -1300,11 +1307,16 @@ function App() {
   };
 
   const openSuggestModal = (account: Account) => {
+    const suggestedValue = account.suggested_next_vac_live_value && account.suggested_next_vac_live_value > 0
+      ? String(account.suggested_next_vac_live_value)
+      : "20";
+    const suggestedUnit = account.suggested_next_vac_live_unit === "days" ? "days" : "hours";
+
     setSuggestAccount(account);
     setSuggestionForm({
       suggested_ban_type: "",
-      suggested_vac_live_value: "20",
-      suggested_vac_live_unit: "hours",
+      suggested_vac_live_value: suggestedValue,
+      suggested_vac_live_unit: suggestedUnit,
       suggested_vac_live_fault_user_id: "",
       suggested_matchmaking_ready: "",
       suggested_is_public: "",
@@ -2973,6 +2985,9 @@ function App() {
               </select>
               {suggestionForm.suggested_ban_type === "VACLive" && (
                 <div className="grid gap-2 md:grid-cols-[1fr_120px]">
+                  <p className="md:col-span-2 rounded-xl border border-amber-300/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                    Recommended next VAC Live duration (based on {suggestAccount.vac_live_fault_count ?? 0} recorded fault(s)): {suggestAccount.suggested_next_vac_live_value ?? 20} {suggestAccount.suggested_next_vac_live_unit ?? "hours"}
+                  </p>
                   <input
                     className="anime-input"
                     type="number"

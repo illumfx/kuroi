@@ -147,6 +147,9 @@ class SteamAccountOut(BaseModel):
     server_now: datetime | None = None
     vac_live_fault_user_id: int | None = None
     vac_live_fault_display: str | None = None
+    vac_live_fault_count: int = 0
+    suggested_next_vac_live_value: int = 20
+    suggested_next_vac_live_unit: Literal["hours", "days"] = "hours"
     matchmaking_ready: bool
     is_public: bool
     is_prime: bool
@@ -201,8 +204,8 @@ class AccountSuggestionCreate(BaseModel):
         ):
             raise ValueError("At least one suggested change or note is required")
         if self.suggested_ban_type == BanType.VAC_LIVE:
-            if self.suggested_vac_live_value is None or self.suggested_vac_live_unit is None:
-                raise ValueError("VAC Live suggestions require suggested_vac_live_value and suggested_vac_live_unit")
+            if (self.suggested_vac_live_value is None) != (self.suggested_vac_live_unit is None):
+                raise ValueError("Provide both suggested_vac_live_value and suggested_vac_live_unit, or neither")
         else:
             self.suggested_vac_live_value = None
             self.suggested_vac_live_unit = None

@@ -114,7 +114,7 @@ class VacLiveFault(Base):
     __tablename__ = "vac_live_faults"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    account_id: Mapped[int] = mapped_column(ForeignKey("steam_accounts.id"), unique=True, index=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("steam_accounts.id"), index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     ban_expires_at: Mapped[datetime] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
