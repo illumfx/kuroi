@@ -1211,7 +1211,10 @@ def vac_live_fault_leaderboard(user: User = Depends(get_current_user), db: Sessi
     ).all()
 
     grouped: dict[int, VacLiveFaultLeaderboardEntryOut] = {}
-    for fault_record, fault_user, account in rows:
+    grouped_account_counts: dict[int, dict[str, int]] = {}
+    grouped_account_order: dict[int, list[str]] = {}
+
+    for _fault_record, fault_user, account in rows:
         existing = grouped.get(fault_user.id)
         if existing is None:
             existing = VacLiveFaultLeaderboardEntryOut(
@@ -1223,10 +1226,23 @@ def vac_live_fault_leaderboard(user: User = Depends(get_current_user), db: Sessi
                 accounts=[],
             )
             grouped[fault_user.id] = existing
+            grouped_account_counts[fault_user.id] = {}
+            grouped_account_order[fault_user.id] = []
 
         existing.total_faults += 1
-        if account.username not in existing.accounts:
-            existing.accounts.append(account.username)
+        account_counts = grouped_account_counts[fault_user.id]
+        account_order = grouped_account_order[fault_user.id]
+        account_counts[account.username] = account_counts.get(account.username, 0) + 1
+        if account.username not in account_order:
+            account_order.append(account.username)
+
+    for user_id, entry in grouped.items():
+        account_counts = grouped_account_counts[user_id]
+        account_order = grouped_account_order[user_id]
+        entry.accounts = [
+            f"{account_name} ({account_counts[account_name]})" if account_counts[account_name] > 1 else account_name
+            for account_name in account_order
+        ]
 
     return sorted(grouped.values(), key=lambda entry: (-entry.total_faults, entry.label.lower()))
 

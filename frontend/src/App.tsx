@@ -488,9 +488,24 @@ function App() {
     const items = [...filteredAccounts];
 
     if (sortOption === "mm_ready") {
+      const isEffectivelyBannedForSort = (account: Account) => {
+        const normalized = account.ban_type.trim().toLowerCase();
+        if (normalized === "vac" || normalized === "gamebanned") {
+          return true;
+        }
+        if (normalized === "vaclive") {
+          const expiresAt = parseApiDate(account.vac_live_expires_at);
+          if (expiresAt !== null) {
+            return expiresAt > countdownNow;
+          }
+          return Boolean(account.vac_live_remaining && account.vac_live_remaining !== "Expired");
+        }
+        return false;
+      };
+
       return items.sort((a, b) => {
-        const aIsBanned = a.ban_type !== "None";
-        const bIsBanned = b.ban_type !== "None";
+        const aIsBanned = isEffectivelyBannedForSort(a);
+        const bIsBanned = isEffectivelyBannedForSort(b);
         const aRank = a.matchmaking_ready ? (aIsBanned ? 1 : 0) : aIsBanned ? 3 : 2;
         const bRank = b.matchmaking_ready ? (bIsBanned ? 1 : 0) : bIsBanned ? 3 : 2;
         if (aRank !== bRank) {
@@ -522,7 +537,7 @@ function App() {
     }
 
     return items.sort((a, b) => b.username.localeCompare(a.username));
-  }, [filteredAccounts, sortOption]);
+  }, [filteredAccounts, sortOption, countdownNow]);
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(sortedAccounts.length / ACCOUNTS_PER_PAGE)), [sortedAccounts.length]);
   const pageNumbers = useMemo(() => Array.from({ length: totalPages }, (_, index) => index + 1), [totalPages]);
@@ -1963,7 +1978,7 @@ function App() {
               <h1 className="bg-gradient-to-r from-fuchsia-200 via-sky-200 to-indigo-200 bg-clip-text text-3xl font-semibold tracking-tight text-transparent">
                 kuroi 黒い
               </h1>
-              <p className="mt-2 text-zinc-300/85">Steam account management with ban intelligence and automation-first workflows.</p>
+              <p className="mt-2 text-zinc-300/85">Simple Steam account tracking for everyday use.</p>
               </div>
             </div>
             {isLoggedIn && (
@@ -2264,77 +2279,6 @@ function App() {
                 </label>
               </div>
             </div>
-
-            {editingAccountId && (
-              <form onSubmit={handleUpdateAccount} className="anime-panel grid gap-3 rounded-3xl p-4 md:grid-cols-3">
-                <input className="anime-input" placeholder="Username" value={editAccount.username} onChange={(event) => setEditAccount({ ...editAccount, username: event.target.value })} />
-                <input className="anime-input" placeholder="Email" value={editAccount.email} onChange={(event) => setEditAccount({ ...editAccount, email: event.target.value })} />
-                <input
-                  type="password"
-                  className="anime-input"
-                  placeholder={
-                    accounts.find((account) => account.id === editingAccountId && isAccountOnline(account))
-                      ? "Hidden while online, leave empty to keep"
-                      : "Password"
-                  }
-                  value={editAccount.password}
-                  onChange={(event) => setEditAccount({ ...editAccount, password: event.target.value })}
-                />
-                <input className="anime-input" placeholder="Steam ID64" value={editAccount.steam_id} onChange={(event) => setEditAccount({ ...editAccount, steam_id: event.target.value })} />
-                <select className="anime-input" value={editAccount.ban_type} onChange={(event) => setEditAccount({ ...editAccount, ban_type: event.target.value as BanType })}>
-                  <option value="None">Not banned</option>
-                  <option value="VAC">VAC</option>
-                  <option value="GameBanned">Game Banned</option>
-                  <option value="VACLive">VAC Live</option>
-                </select>
-                {editAccount.ban_type === "VACLive" && (
-                  <>
-                    <input
-                      className="anime-input"
-                      type="number"
-                      min={1}
-                      max={365}
-                      value={editAccount.vac_live_value}
-                      onChange={(event) => setEditAccount({ ...editAccount, vac_live_value: event.target.value })}
-                    />
-                    <select className="anime-input" value={editAccount.vac_live_unit} onChange={(event) => setEditAccount({ ...editAccount, vac_live_unit: event.target.value as "hours" | "days" })}>
-                      <option value="hours">Hours</option>
-                      <option value="days">Days</option>
-                    </select>
-                    <select
-                      className="anime-input md:col-span-3"
-                      value={editAccount.vac_live_fault_user_id}
-                      onChange={(event) => setEditAccount({ ...editAccount, vac_live_fault_user_id: event.target.value })}
-                    >
-                      <option value="">Who caused it? Optional</option>
-                      {userOptions.map((user) => (
-                        <option key={user.id} value={String(user.id)}>
-                          {formatUserChoiceLabel(user)}
-                        </option>
-                      ))}
-                    </select>
-                  </>
-                )}
-                <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-sm text-zinc-100">
-                  <input className="anime-checkbox" type="checkbox" checked={editAccount.matchmaking_ready} onChange={(event) => setEditAccount({ ...editAccount, matchmaking_ready: event.target.checked })} />
-                  Matchmaking ready (Level 2)
-                </label>
-                <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-sm text-zinc-100">
-                  <input className="anime-checkbox" type="checkbox" checked={editAccount.is_public} onChange={(event) => setEditAccount({ ...editAccount, is_public: event.target.checked })} />
-                  Public visibility
-                </label>
-                <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-sm text-zinc-100">
-                  <input className="anime-checkbox" type="checkbox" checked={editAccount.is_prime} onChange={(event) => setEditAccount({ ...editAccount, is_prime: event.target.checked })} />
-                  Prime account
-                </label>
-                <div className="md:col-span-3 flex gap-3">
-                  <button className="anime-primary-button">Save Changes</button>
-                  <button type="button" className="anime-secondary-button" onClick={() => setEditingAccountId(null)}>
-                    Cancel
-                  </button>
-                </div>
-              </form>
-            )}
 
             {viewMode === "table" && (
               <div ref={tableScrollRef} className="anime-panel overflow-x-auto rounded-3xl" onScroll={updateStickyActionsOverlap}>
@@ -2953,6 +2897,95 @@ function App() {
                   className="anime-secondary-button px-5"
                   onClick={() => setMultiEditOpen(false)}
                 >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {editingAccountId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 backdrop-blur-sm px-4">
+          <div className="anime-panel w-full max-w-4xl rounded-3xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-zinc-100">Edit Account #{editingAccountId}</h2>
+              <button
+                type="button"
+                className="rounded-lg border border-zinc-600 px-3 py-1 text-sm text-zinc-300 hover:bg-zinc-700/60"
+                onClick={() => setEditingAccountId(null)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateAccount} className="grid gap-3 md:grid-cols-3">
+              <input className="anime-input" placeholder="Username" value={editAccount.username} onChange={(event) => setEditAccount({ ...editAccount, username: event.target.value })} />
+              <input className="anime-input" placeholder="Email" value={editAccount.email} onChange={(event) => setEditAccount({ ...editAccount, email: event.target.value })} />
+              <input
+                type="password"
+                className="anime-input"
+                placeholder={
+                  accounts.find((account) => account.id === editingAccountId && isAccountOnline(account))
+                    ? "Hidden while online, leave empty to keep"
+                    : "Password"
+                }
+                value={editAccount.password}
+                onChange={(event) => setEditAccount({ ...editAccount, password: event.target.value })}
+              />
+              <input className="anime-input" placeholder="Steam ID64" value={editAccount.steam_id} onChange={(event) => setEditAccount({ ...editAccount, steam_id: event.target.value })} />
+              <select className="anime-input" value={editAccount.ban_type} onChange={(event) => setEditAccount({ ...editAccount, ban_type: event.target.value as BanType })}>
+                <option value="None">Not banned</option>
+                <option value="VAC">VAC</option>
+                <option value="GameBanned">Game Banned</option>
+                <option value="VACLive">VAC Live</option>
+              </select>
+
+              {editAccount.ban_type === "VACLive" && (
+                <>
+                  <input
+                    className="anime-input"
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={editAccount.vac_live_value}
+                    onChange={(event) => setEditAccount({ ...editAccount, vac_live_value: event.target.value })}
+                  />
+                  <select className="anime-input" value={editAccount.vac_live_unit} onChange={(event) => setEditAccount({ ...editAccount, vac_live_unit: event.target.value as "hours" | "days" })}>
+                    <option value="hours">Hours</option>
+                    <option value="days">Days</option>
+                  </select>
+                  <select
+                    className="anime-input md:col-span-3"
+                    value={editAccount.vac_live_fault_user_id}
+                    onChange={(event) => setEditAccount({ ...editAccount, vac_live_fault_user_id: event.target.value })}
+                  >
+                    <option value="">Who caused it? Optional</option>
+                    {userOptions.map((user) => (
+                      <option key={user.id} value={String(user.id)}>
+                        {formatUserChoiceLabel(user)}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
+
+              <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-sm text-zinc-100">
+                <input className="anime-checkbox" type="checkbox" checked={editAccount.matchmaking_ready} onChange={(event) => setEditAccount({ ...editAccount, matchmaking_ready: event.target.checked })} />
+                Matchmaking ready (Level 2)
+              </label>
+              <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-sm text-zinc-100">
+                <input className="anime-checkbox" type="checkbox" checked={editAccount.is_public} onChange={(event) => setEditAccount({ ...editAccount, is_public: event.target.checked })} />
+                Public visibility
+              </label>
+              <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-sm text-zinc-100">
+                <input className="anime-checkbox" type="checkbox" checked={editAccount.is_prime} onChange={(event) => setEditAccount({ ...editAccount, is_prime: event.target.checked })} />
+                Prime account
+              </label>
+
+              <div className="md:col-span-3 flex gap-3">
+                <button className="anime-primary-button">Save Changes</button>
+                <button type="button" className="anime-secondary-button" onClick={() => setEditingAccountId(null)}>
                   Cancel
                 </button>
               </div>
