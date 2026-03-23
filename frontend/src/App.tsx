@@ -2527,7 +2527,9 @@ function App() {
                       <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Avatar</th>
                       <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Username</th>
                       <th className="hidden px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300 2xl:table-cell">Steam ID64</th>
-                      <th className="hidden px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300 2xl:table-cell">Password</th>
+                      {!allowShiroLogin && (
+                        <th className="hidden px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300 2xl:table-cell">Password</th>
+                      )}
                       <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Ban Type</th>
                       <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Status</th>
                       <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">VAC Live Left</th>
@@ -2579,20 +2581,22 @@ function App() {
                             {account.steam_id64 ?? "-"}
                           </button>
                         </td>
-                        <td className="hidden px-3 py-2 2xl:table-cell">
-                          {canRevealPassword(account) ? (
-                            <button
-                              type="button"
-                              className="group cursor-copy text-left"
-                              title="Hover to reveal, click to copy password"
-                              onClick={() => copyAccountField(account.password)}
-                            >
-                              <span className="inline-block blur-sm transition group-hover:blur-0">{account.password}</span>
-                            </button>
-                          ) : (
-                            <span className="text-zinc-500">Hidden while online</span>
-                          )}
-                        </td>
+                        {!allowShiroLogin && (
+                          <td className="hidden px-3 py-2 2xl:table-cell">
+                            {canRevealPassword(account) ? (
+                              <button
+                                type="button"
+                                className="group cursor-copy text-left"
+                                title="Hover to reveal, click to copy password"
+                                onClick={() => copyAccountField(account.password)}
+                              >
+                                <span className="inline-block blur-sm transition group-hover:blur-0">{account.password}</span>
+                              </button>
+                            ) : (
+                              <span className="text-zinc-500">Hidden while online</span>
+                            )}
+                          </td>
+                        )}
                         <td className="px-3 py-2">{account.ban_type}</td>
                         <td className="px-3 py-2">{getDisplayStatus(account)}</td>
                         <td className="px-3 py-2">{getVacLiveRemainingLabel(account)}</td>
