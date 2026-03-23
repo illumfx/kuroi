@@ -128,32 +128,34 @@ def check_rate_limit(ip_address: str) -> bool:
     return True
 
 
+def rate_limit(request: Request) -> None:
+    """Check rate limit for the requesting IP address"""
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Too many requests. Please try again later.",
+        )
+
+
+def cleanup_expired_vac_live_faults() -> None:
+    """Delete VAC Live fault records that have expired (ban_expires_at < now)"""
+    with SessionLocal() as db:
+        now = datetime.now(timezone.utc)
+        expired_faults = db.scalars(
+            select(VacLiveFault).where(VacLiveFault.ban_expires_at < now)
+        ).all()
+
+        if expired_faults:
+            for fault in expired_faults:
+                db.delete(fault)
+            db.commit()
+
+
 def validate_runtime_config() -> None:
     blocked_secrets = {"", "change-me", "please-change-me", "change-this-secret", "CHANGE_ME_LONG_RANDOM_SECRET"}
     if settings.app_secret in blocked_secrets:
         raise RuntimeError("APP_SECRET must be set to a strong unique value")
-
-    def rate_limit(request: Request) -> None:
-        """Check rate limit for the requesting IP address"""
-        client_ip = request.client.host if request.client else "unknown"
-        if not check_rate_limit(client_ip):
-            raise HTTPException(
-                status_code=429,
-                detail="Rate limit exceeded. Too many requests. Please try again later."
-            )
-
-    def cleanup_expired_vac_live_faults() -> None:
-        """Delete VAC Live fault records that have expired (ban_expires_at < now)"""
-        with SessionLocal() as db:
-            now = datetime.now(timezone.utc)
-            expired_faults = db.scalars(
-                select(VacLiveFault).where(VacLiveFault.ban_expires_at < now)
-            ).all()
-        
-            if expired_faults:
-                for fault in expired_faults:
-                    db.delete(fault)
-                db.commit()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_url, "http://localhost:3000", "http://localhost:5173"],
@@ -1798,6 +1800,36 @@ async def shiro_login(
     launch_url = f"shiro://login?token={token}&api={api_base}"
 
     return {"token": token, "launch_url": launch_url}
+
+
+@app.get("/accounts/{account_id}/shiro-info")
+async def shiro_info(
+    account_id: int,
+    actor: User = Depends(resolve_actor),
+    db: Session = Depends(get_db),
+):
+    """Return account credentials for the owner on demand.
+
+    This is intended for the frontend info modal and only works when
+    Shiro login is enabled and the account is offline.
+    """
+    if not settings.allow_shiro_login:
+        raise HTTPException(status_code=403, detail="Shiro one-click login is disabled")
+
+    account = db.get(SteamAccount, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if account.owner_id != actor.id:
+        raise HTTPException(status_code=403, detail="Account info is only available for the account owner")
+    if is_account_online(account):
+        raise HTTPException(status_code=409, detail="Credentials are unavailable while the account is online")
+
+    plaintext_password = decrypt_account_password(account.password, settings.app_secret)
+    return {
+        "username": account.username,
+        "email": account.email,
+        "password": plaintext_password,
+    }
 
 
 @app.get("/shiro/credentials/{token}")

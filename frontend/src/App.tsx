@@ -81,6 +81,12 @@ type ChangePasswordResponse = {
   status: string;
 };
 
+type ShiroAccountInfo = {
+  username: string;
+  email: string;
+  password: string;
+};
+
 type MassImportError = {
   line: number;
   message: string;
@@ -393,6 +399,10 @@ function App() {
   const [shiroLoginAccount, setShiroLoginAccount] = useState<Account | null>(null);
   const [shiroLoading, setShiroLoading] = useState(false);
   const [shiroMessage, setShiroMessage] = useState("");
+  const [shiroInfoAccount, setShiroInfoAccount] = useState<Account | null>(null);
+  const [shiroInfoLoading, setShiroInfoLoading] = useState(false);
+  const [shiroInfoData, setShiroInfoData] = useState<ShiroAccountInfo | null>(null);
+  const [showShiroInfoPassword, setShowShiroInfoPassword] = useState(false);
   const [showManagementTools, setShowManagementTools] = useState(false);
   const [allowInviteLinkCreation, setAllowInviteLinkCreation] = useState(false);
   const [allowShiroLogin, setAllowShiroLogin] = useState(false);
@@ -2046,6 +2056,40 @@ function App() {
     setShiroMessage("");
   };
 
+  const handleOpenShiroInfo = async (account: Account) => {
+    if (!allowShiroLogin) {
+      setError("Shiro one-click login is disabled");
+      return;
+    }
+    if (currentUserId !== account.owner_id) {
+      setError("Account info is only available for the account owner");
+      return;
+    }
+
+    setError("");
+    setShiroInfoAccount(account);
+    setShiroInfoLoading(true);
+    setShiroInfoData(null);
+    setShowShiroInfoPassword(false);
+
+    try {
+      const data = await apiFetch<ShiroAccountInfo>(`/accounts/${account.id}/shiro-info`, token);
+      setShiroInfoData(data);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Could not load account info");
+      setShiroInfoAccount(null);
+    } finally {
+      setShiroInfoLoading(false);
+    }
+  };
+
+  const closeShiroInfoModal = () => {
+    setShiroInfoAccount(null);
+    setShiroInfoLoading(false);
+    setShiroInfoData(null);
+    setShowShiroInfoPassword(false);
+  };
+
   const renderAccountActions = (account: Account, compact = false) => {
     const loginDisabled = !canLaunchLogin(account);
     const loginTitle = loginDisabled
@@ -2056,15 +2100,25 @@ function App() {
       return (
         <div className={`flex ${compact ? "flex-wrap" : ""} gap-1.5`}>
           {allowShiroLogin && (
-            <button
-              type="button"
-              className="inline-flex items-center rounded-lg border border-emerald-300/40 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-100 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-              title={loginTitle}
-              disabled={loginDisabled}
-              onClick={() => handleShiroLogin(account)}
-            >
-              ▶ Login
-            </button>
+            <>
+              <button
+                type="button"
+                className="inline-flex items-center rounded-lg border border-emerald-300/40 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-100 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                title={loginTitle}
+                disabled={loginDisabled}
+                onClick={() => handleShiroLogin(account)}
+              >
+                ▶ Login
+              </button>
+              <button
+                type="button"
+                className="inline-flex items-center rounded-lg border border-cyan-300/40 bg-cyan-500/10 px-2 py-1 text-[11px] text-cyan-100 hover:bg-cyan-500/20"
+                title="Show account info"
+                onClick={() => handleOpenShiroInfo(account)}
+              >
+                ℹ Info
+              </button>
+            </>
           )}
           <button
             type="button"
@@ -3376,6 +3430,80 @@ function App() {
               )}
               <p className="text-sm text-zinc-300">{shiroMessage}</p>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Shiro Account Info Modal */}
+      {shiroInfoAccount && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 backdrop-blur-sm px-4">
+          <div className="anime-panel w-full max-w-lg rounded-3xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-zinc-100">
+                Account Info - {shiroInfoAccount.username}
+              </h2>
+              <button
+                type="button"
+                className="rounded-lg border border-zinc-600 px-3 py-1 text-sm text-zinc-300 hover:bg-zinc-700/60"
+                onClick={closeShiroInfoModal}
+              >
+                ✕
+              </button>
+            </div>
+
+            {shiroInfoLoading ? (
+              <div className="flex items-center gap-3 py-3">
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
+                <p className="text-sm text-zinc-300">Loading account info...</p>
+              </div>
+            ) : shiroInfoData ? (
+              <div className="space-y-3">
+                <div className="rounded-xl border border-zinc-700/60 bg-zinc-900/45 p-3">
+                  <p className="text-xs text-zinc-400">Username</p>
+                  <div className="mt-1 flex items-center justify-between gap-3">
+                    <p className="font-mono text-sm text-zinc-100 break-all">{shiroInfoData.username}</p>
+                    <button type="button" className="anime-secondary-button px-2 py-1 text-xs" onClick={() => copyAccountField(shiroInfoData.username)}>
+                      Copy
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-zinc-700/60 bg-zinc-900/45 p-3">
+                  <p className="text-xs text-zinc-400">Email</p>
+                  <div className="mt-1 flex items-center justify-between gap-3">
+                    <p className="font-mono text-sm text-zinc-100 break-all">{shiroInfoData.email}</p>
+                    <button type="button" className="anime-secondary-button px-2 py-1 text-xs" onClick={() => copyAccountField(shiroInfoData.email)}>
+                      Copy
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-zinc-700/60 bg-zinc-900/45 p-3">
+                  <p className="text-xs text-zinc-400">Password</p>
+                  <div className="mt-1 flex items-center justify-between gap-3">
+                    <p className="font-mono text-sm text-zinc-100 break-all">
+                      {showShiroInfoPassword
+                        ? shiroInfoData.password
+                        : "•".repeat(Math.max(8, shiroInfoData.password.length))}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="anime-secondary-button px-2 py-1 text-xs"
+                        onClick={() => setShowShiroInfoPassword((visible) => !visible)}
+                      >
+                        {showShiroInfoPassword ? "Hide" : "Show"}
+                      </button>
+                      <button type="button" className="anime-secondary-button px-2 py-1 text-xs" onClick={() => copyAccountField(shiroInfoData.password)}>
+                        Copy
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-zinc-300">No account info available.</p>
+            )}
           </div>
         </div>
       )}
