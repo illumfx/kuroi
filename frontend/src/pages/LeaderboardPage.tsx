@@ -62,7 +62,7 @@ function LeaderboardPage({ token }: LeaderboardPageProps) {
           <h2 className="bg-gradient-to-r from-fuchsia-200 via-sky-200 to-indigo-200 bg-clip-text text-2xl font-semibold tracking-tight text-transparent">
             VAC Live Fault Leaderboard
           </h2>
-          <p className="mt-2 text-sm text-zinc-300/85">Recorded VAC Live faults grouped by assigned user.</p>
+          <p className="mt-2 text-sm text-zinc-300/85">Historical VAC Live faults grouped by assigned user, including expired and resolved incidents.</p>
         </div>
       </div>
 
@@ -81,7 +81,7 @@ function LeaderboardPage({ token }: LeaderboardPageProps) {
               <tr>
                 <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">Rank</th>
                 <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">User</th>
-                <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">Recorded Faults</th>
+                <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">Historical Faults</th>
                 <th className="px-4 py-3 text-left text-xs uppercase tracking-wider text-zinc-300">Accounts</th>
               </tr>
             </thead>

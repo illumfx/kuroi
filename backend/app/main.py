@@ -139,17 +139,8 @@ def rate_limit(request: Request) -> None:
 
 
 def cleanup_expired_vac_live_faults() -> None:
-    """Delete VAC Live fault records that have expired (ban_expires_at < now)"""
-    with SessionLocal() as db:
-        now = datetime.now(timezone.utc)
-        expired_faults = db.scalars(
-            select(VacLiveFault).where(VacLiveFault.ban_expires_at < now)
-        ).all()
-
-        if expired_faults:
-            for fault in expired_faults:
-                db.delete(fault)
-            db.commit()
+    """Keep historical VAC Live fault records for escalation and audit purposes."""
+    return
 
 
 def validate_runtime_config() -> None:
@@ -274,6 +265,45 @@ def ensure_account_unique_constraints() -> None:
         ) from exc
 
 
+def ensure_vac_live_fault_history_support() -> None:
+    if engine.dialect.name != "postgresql":
+        return
+
+    with engine.begin() as connection:
+        unique_constraint_names = connection.execute(
+            text(
+                "SELECT c.conname "
+                "FROM pg_constraint c "
+                "JOIN pg_class t ON t.oid = c.conrelid "
+                "JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(c.conkey) "
+                "WHERE c.contype = 'u' "
+                "AND t.relname = 'vac_live_faults' "
+                "AND a.attname = 'account_id'"
+            )
+        ).scalars().all()
+
+        for constraint_name in unique_constraint_names:
+            connection.exec_driver_sql(f"ALTER TABLE vac_live_faults DROP CONSTRAINT IF EXISTS {constraint_name}")
+
+        unique_index_names = connection.execute(
+            text(
+                "SELECT indexname "
+                "FROM pg_indexes "
+                "WHERE schemaname = ANY(current_schemas(false)) "
+                "AND tablename = 'vac_live_faults' "
+                "AND indexdef ILIKE '%UNIQUE%' "
+                "AND indexdef ILIKE '%(account_id)%'"
+            )
+        ).scalars().all()
+
+        for index_name in unique_index_names:
+            connection.exec_driver_sql(f"DROP INDEX IF EXISTS {index_name}")
+
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_vac_live_faults_account_id ON vac_live_faults (account_id)"
+        )
+
+
 def ensure_account_delete_cascades() -> None:
     if engine.dialect.name != "postgresql":
         return
@@ -312,6 +342,7 @@ def ensure_account_delete_cascades() -> None:
 
 
 ensure_schema_extensions()
+ensure_vac_live_fault_history_support()
 ensure_account_delete_cascades()
 ensure_account_unique_constraints()
 validate_runtime_config()
@@ -579,7 +610,6 @@ def sync_vac_live_fault_record(db: Session, account: SteamAccount) -> None:
     expires_at = normalize_utc_datetime(account.vac_live_expires_at)
     should_track = account.ban_type == BanType.VAC_LIVE.value and account.vac_live_fault_user_id is not None and expires_at is not None
 
-    # Always check if there's an existing record
     latest_record = db.scalar(
         select(VacLiveFault)
         .where(VacLiveFault.account_id == account.id)
@@ -588,20 +618,19 @@ def sync_vac_live_fault_record(db: Session, account: SteamAccount) -> None:
     )
 
     if not should_track:
-        # Delete any existing record if we're not tracking this account anymore
-        if latest_record:
-            db.delete(latest_record)
-            db.flush()
         return
 
     expires_at_naive = expires_at.replace(tzinfo=None)
     if latest_record and latest_record.user_id == int(account.vac_live_fault_user_id) and latest_record.ban_expires_at == expires_at_naive:
         return
 
-    # Delete the old record if it exists before inserting the new one to avoid unique constraint violations
-    if latest_record:
-        db.delete(latest_record)
+    latest_expires_at = normalize_utc_datetime(latest_record.ban_expires_at) if latest_record else None
+    if latest_record and latest_expires_at and latest_expires_at > datetime.now(timezone.utc):
+        latest_record.user_id = int(account.vac_live_fault_user_id)
+        latest_record.ban_expires_at = expires_at_naive
+        db.add(latest_record)
         db.flush()
+        return
 
     db.add(
         VacLiveFault(

@@ -1939,6 +1939,14 @@ function App() {
     return account.vac_live_remaining ?? "Expired";
   };
 
+  const getRecordedFaultsLabel = (account: Account) => {
+    const faultCount = account.vac_live_fault_count ?? 0;
+    if (faultCount <= 0) {
+      return null;
+    }
+    return `${faultCount} recorded fault${faultCount === 1 ? "" : "s"}`;
+  };
+
   const getRowClassName = (account: Account) => {
     return "hover:bg-zinc-800/35";
   };
@@ -2569,6 +2577,7 @@ function App() {
                           <div className="mt-1 space-y-0.5 text-[10px] text-zinc-400 xl:hidden">
                             <p>{account.ban_type} · {account.matchmaking_ready ? "MM Ready" : "MM Off"}</p>
                             <p>{account.is_public ? "Public" : "Private"} · {getDisplayStatus(account)}</p>
+                            {getRecordedFaultsLabel(account) && <p>{getRecordedFaultsLabel(account)}</p>}
                           </div>
                         </td>
                         <td className="hidden px-3 py-2 2xl:table-cell">
@@ -2599,7 +2608,12 @@ function App() {
                         )}
                         <td className="px-3 py-2">{account.ban_type}</td>
                         <td className="px-3 py-2">{getDisplayStatus(account)}</td>
-                        <td className="px-3 py-2">{getVacLiveRemainingLabel(account)}</td>
+                        <td className="px-3 py-2">
+                          <div>{getVacLiveRemainingLabel(account)}</div>
+                          {getRecordedFaultsLabel(account) && (
+                            <div className="mt-1 text-[10px] text-amber-300">{getRecordedFaultsLabel(account)}</div>
+                          )}
+                        </td>
                         <td className="px-3 py-2">{account.matchmaking_ready ? "Yes" : "No"}</td>
                         <td className="px-3 py-2">{account.is_public ? "Public" : "Private"}</td>
                         <td className="hidden px-3 py-2 lg:table-cell">
@@ -2639,6 +2653,8 @@ function App() {
                       <p>Status: <span className="text-zinc-100">{getDisplayStatus(account)}</span></p>
                       <p>MM Ready: <span className="text-zinc-100">{account.matchmaking_ready ? "Yes" : "No"}</span></p>
                       <p>Visibility: <span className="text-zinc-100">{account.is_public ? "Public" : "Private"}</span></p>
+                      <p>Fault History: <span className="text-zinc-100">{account.vac_live_fault_count ?? 0}</span></p>
+                      <p>VAC Live Left: <span className="text-zinc-100">{getVacLiveRemainingLabel(account)}</span></p>
                       <p className="col-span-2">Steam ID: <span className="text-zinc-100">{account.steam_id64 ?? "-"}</span></p>
                     </div>
                     <div>{renderAccountActions(account, true)}</div>
@@ -2662,6 +2678,7 @@ function App() {
                       <span className="text-zinc-400">{account.ban_type}</span>
                       <span className="text-zinc-400">{account.matchmaking_ready ? "MM Ready" : "MM Off"}</span>
                       <span className="text-zinc-400">{account.is_public ? "Public" : "Private"}</span>
+                      {(account.vac_live_fault_count ?? 0) > 0 && <span className="text-amber-300">{account.vac_live_fault_count} recorded</span>}
                       {(account.pending_review_count ?? 0) > 0 && <span className="rounded-full bg-sky-400 px-2 py-0.5 text-[10px] font-semibold text-zinc-950">{account.pending_review_count}</span>}
                       <div className="ml-auto">{renderAccountActions(account, true)}</div>
                     </div>
