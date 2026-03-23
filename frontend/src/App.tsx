@@ -2061,8 +2061,8 @@ function App() {
       setError("Shiro one-click login is disabled");
       return;
     }
-    if (currentUserId !== account.owner_id) {
-      setError("Account info is only available for the account owner");
+    if (currentUserId !== account.owner_id && !account.is_public) {
+      setError("Account info is only available for the account owner or public accounts");
       return;
     }
 
@@ -2149,15 +2149,25 @@ function App() {
     return (
       <div className={`flex ${compact ? "flex-wrap" : ""} gap-1.5`}>
         {allowShiroLogin && account.is_public && (
-          <button
-            type="button"
-            className="inline-flex items-center rounded-lg border border-emerald-300/40 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-100 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-            title={loginDisabled ? "Unavailable while account is online" : "Login to this public Steam account via Shiro"}
-            disabled={loginDisabled}
-            onClick={() => handleShiroLogin(account)}
-          >
-            ▶ Login
-          </button>
+          <>
+            <button
+              type="button"
+              className="inline-flex items-center rounded-lg border border-emerald-300/40 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-100 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+              title={loginDisabled ? "Unavailable while account is online" : "Login to this public Steam account via Shiro"}
+              disabled={loginDisabled}
+              onClick={() => handleShiroLogin(account)}
+            >
+              ▶ Login
+            </button>
+            <button
+              type="button"
+              className="inline-flex items-center rounded-lg border border-cyan-300/40 bg-cyan-500/10 px-2 py-1 text-[11px] text-cyan-100 hover:bg-cyan-500/20"
+              title="Show account info"
+              onClick={() => handleOpenShiroInfo(account)}
+            >
+              ℹ Info
+            </button>
+          </>
         )}
         <button
           type="button"
@@ -2516,7 +2526,6 @@ function App() {
                       </th>
                       <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Avatar</th>
                       <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Username</th>
-                      <th className="hidden px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300 xl:table-cell">Email</th>
                       <th className="hidden px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300 2xl:table-cell">Steam ID64</th>
                       <th className="hidden px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300 2xl:table-cell">Password</th>
                       <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-zinc-300">Ban Type</th>
@@ -2559,16 +2568,6 @@ function App() {
                             <p>{account.ban_type} · {account.matchmaking_ready ? "MM Ready" : "MM Off"}</p>
                             <p>{account.is_public ? "Public" : "Private"} · {getDisplayStatus(account)}</p>
                           </div>
-                        </td>
-                        <td className="hidden px-3 py-2 xl:table-cell">
-                          <button
-                            type="button"
-                            className="block max-w-[200px] cursor-copy truncate text-left hover:text-fuchsia-200"
-                            title="Click to copy email"
-                            onClick={() => copyAccountField(account.email)}
-                          >
-                            {account.email}
-                          </button>
                         </td>
                         <td className="hidden px-3 py-2 2xl:table-cell">
                           <button
@@ -2625,7 +2624,6 @@ function App() {
                           <button type="button" className="font-medium text-zinc-100 hover:text-fuchsia-200" onClick={() => copyAccountField(account.username)}>
                             {renderAccountName(account, true)}
                           </button>
-                          <p className="text-xs text-zinc-400">{account.email}</p>
                         </div>
                       </div>
                       {currentUserId === account.owner_id && (

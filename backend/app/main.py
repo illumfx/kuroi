@@ -1808,10 +1808,10 @@ async def shiro_info(
     actor: User = Depends(resolve_actor),
     db: Session = Depends(get_db),
 ):
-    """Return account credentials for the owner on demand.
+    """Return account credentials on demand.
 
-    This is intended for the frontend info modal and only works when
-    Shiro login is enabled and the account is offline.
+    Intended for the frontend info modal. Available for account owners,
+    and for viewers if the account is public.
     """
     if not settings.allow_shiro_login:
         raise HTTPException(status_code=403, detail="Shiro one-click login is disabled")
@@ -1819,8 +1819,9 @@ async def shiro_info(
     account = db.get(SteamAccount, account_id)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
-    if account.owner_id != actor.id:
-        raise HTTPException(status_code=403, detail="Account info is only available for the account owner")
+    is_owner = account.owner_id == actor.id
+    if not is_owner and not account.is_public:
+        raise HTTPException(status_code=403, detail="Account info is only available for the account owner or public accounts")
     if is_account_online(account):
         raise HTTPException(status_code=409, detail="Credentials are unavailable while the account is online")
 
