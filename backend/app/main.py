@@ -493,18 +493,27 @@ def sync_vac_live_fault_record(db: Session, account: SteamAccount) -> None:
     expires_at = normalize_utc_datetime(account.vac_live_expires_at)
     should_track = account.ban_type == BanType.VAC_LIVE.value and account.vac_live_fault_user_id is not None and expires_at is not None
 
-    if not should_track:
-        return
-
-    expires_at_naive = expires_at.replace(tzinfo=None)
+    # Always check if there's an existing record
     latest_record = db.scalar(
         select(VacLiveFault)
         .where(VacLiveFault.account_id == account.id)
         .order_by(VacLiveFault.created_at.desc(), VacLiveFault.id.desc())
         .limit(1)
     )
+
+    if not should_track:
+        # Delete any existing record if we're not tracking this account anymore
+        if latest_record:
+            db.delete(latest_record)
+        return
+
+    expires_at_naive = expires_at.replace(tzinfo=None)
     if latest_record and latest_record.user_id == int(account.vac_live_fault_user_id) and latest_record.ban_expires_at == expires_at_naive:
         return
+
+    # Delete the old record if it exists before inserting the new one to avoid unique constraint violations
+    if latest_record:
+        db.delete(latest_record)
 
     db.add(
         VacLiveFault(

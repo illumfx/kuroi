@@ -7,6 +7,7 @@ import AchievementsPage from "./pages/AchievementsPage";
 import LeaderboardPage from "./pages/LeaderboardPage";
 
 type BanType = "None" | "VAC" | "GameBanned" | "VACLive";
+type BanStatus = "Clean" | "Ban" | "VACLive";
 
 type Account = {
   id: number;
@@ -14,6 +15,7 @@ type Account = {
   username: string;
   password: string;
   email: string;
+  ban_status?: BanStatus | string;
   steam_id64?: string | null;
   steam_profile_name?: string | null;
   online_status?: string | null;
@@ -225,6 +227,44 @@ function parseApiDate(value: string | null | undefined): number | null {
   const normalized = /(?:Z|[+-]\d{2}:\d{2})$/.test(raw) ? raw : `${raw}Z`;
   const timestamp = new Date(normalized).getTime();
   return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function normalizeBanType(value: string | null | undefined, fallbackStatus?: string | null): BanType {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (normalized === "vac") {
+    return "VAC";
+  }
+  if (normalized === "gamebanned" || normalized === "game_banned" || normalized === "game banned") {
+    return "GameBanned";
+  }
+  if (normalized === "vaclive" || normalized === "vac_live") {
+    return "VACLive";
+  }
+  if (normalized === "none" || normalized === "clean") {
+    return "None";
+  }
+
+  const statusNormalized = (fallbackStatus ?? "").trim().toLowerCase();
+  if (statusNormalized === "vaclive") {
+    return "VACLive";
+  }
+  if (statusNormalized === "ban") {
+    return "VAC";
+  }
+  return "None";
+}
+
+function normalizeAccount(account: Account): Account {
+  const normalizedBanType = normalizeBanType(account.ban_type, account.ban_status);
+  const hasSuggestedBanType = typeof account.suggested_ban_type === "string";
+
+  return {
+    ...account,
+    ban_type: normalizedBanType,
+    suggested_ban_type: hasSuggestedBanType
+      ? normalizeBanType(account.suggested_ban_type as string)
+      : account.suggested_ban_type,
+  };
 }
 
 function App() {
@@ -798,13 +838,14 @@ function App() {
     const query = params.toString() ? `?${params.toString()}` : "";
     try {
       const data = await apiFetch<Account[]>(`/accounts${query}`, token);
-      const serverNow = data.reduce<number | null>((found, account) => found ?? parseApiDate(account.server_now), null);
+      const normalizedAccounts = data.map(normalizeAccount);
+      const serverNow = normalizedAccounts.reduce<number | null>((found, account) => found ?? parseApiDate(account.server_now), null);
       if (serverNow !== null) {
         const offset = serverNow - Date.now();
         setServerClockOffsetMs(offset);
         setCountdownNow(serverNow);
       }
-      setAccounts(data);
+      setAccounts(normalizedAccounts);
       if (resetPage) {
         setCurrentPage(1);
       }
@@ -1235,13 +1276,14 @@ function App() {
   };
 
   const startEditAccount = (account: Account) => {
+    const normalizedBanType = normalizeBanType(account.ban_type, account.ban_status);
     setEditingAccountId(account.id);
     setEditAccount({
       username: account.username,
       password: isAccountOnline(account) ? "" : account.password,
       email: account.email,
       steam_id: account.steam_id64 ?? "",
-      ban_type: account.ban_type,
+      ban_type: normalizedBanType,
       vac_live_value: "20",
       vac_live_unit: "hours",
       vac_live_fault_user_id: account.vac_live_fault_user_id ? String(account.vac_live_fault_user_id) : "",
