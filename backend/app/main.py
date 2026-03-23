@@ -505,6 +505,7 @@ def sync_vac_live_fault_record(db: Session, account: SteamAccount) -> None:
         # Delete any existing record if we're not tracking this account anymore
         if latest_record:
             db.delete(latest_record)
+            db.flush()
         return
 
     expires_at_naive = expires_at.replace(tzinfo=None)
@@ -514,6 +515,7 @@ def sync_vac_live_fault_record(db: Session, account: SteamAccount) -> None:
     # Delete the old record if it exists before inserting the new one to avoid unique constraint violations
     if latest_record:
         db.delete(latest_record)
+        db.flush()
 
     db.add(
         VacLiveFault(
