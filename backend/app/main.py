@@ -102,12 +102,58 @@ OIDC_STATE_TTL_SECONDS = 600
 oidc_state_store: dict[str, dict[str, str | float]] = {}
 steam_sync_task: asyncio.Task[None] | None = None
 
+# Rate limiting: track request counts per IP
+# Format: {ip_address: [(timestamp, count), ...]}
+rate_limit_store: dict[str, list[float]] = {}
+RATE_LIMIT_REQUESTS = 100  # requests per window
+RATE_LIMIT_WINDOW_SECONDS = 60  # time window
+
+def check_rate_limit(ip_address: str) -> bool:
+    """Check if an IP has exceeded rate limit. Returns True if request is allowed."""
+    now = time.time()
+    window_start = now - RATE_LIMIT_WINDOW_SECONDS
+    
+    if ip_address not in rate_limit_store:
+        rate_limit_store[ip_address] = []
+    
+    # Remove old requests outside the window
+    rate_limit_store[ip_address] = [ts for ts in rate_limit_store[ip_address] if ts > window_start]
+    
+    # Check if limit exceeded
+    if len(rate_limit_store[ip_address]) >= RATE_LIMIT_REQUESTS:
+        return False
+    
+    # Record this request
+    rate_limit_store[ip_address].append(now)
+    return True
+
 
 def validate_runtime_config() -> None:
     blocked_secrets = {"", "change-me", "please-change-me", "change-this-secret", "CHANGE_ME_LONG_RANDOM_SECRET"}
     if settings.app_secret in blocked_secrets:
         raise RuntimeError("APP_SECRET must be set to a strong unique value")
 
+    def rate_limit(request: Request) -> None:
+        """Check rate limit for the requesting IP address"""
+        client_ip = request.client.host if request.client else "unknown"
+        if not check_rate_limit(client_ip):
+            raise HTTPException(
+                status_code=429,
+                detail="Rate limit exceeded. Too many requests. Please try again later."
+            )
+
+    def cleanup_expired_vac_live_faults() -> None:
+        """Delete VAC Live fault records that have expired (ban_expires_at < now)"""
+        with SessionLocal() as db:
+            now = datetime.now(timezone.utc)
+            expired_faults = db.scalars(
+                select(VacLiveFault).where(VacLiveFault.ban_expires_at < now)
+            ).all()
+        
+            if expired_faults:
+                for fault in expired_faults:
+                    db.delete(fault)
+                db.commit()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_url, "http://localhost:3000", "http://localhost:5173"],
@@ -698,6 +744,7 @@ async def steam_sync_loop() -> None:
 async def startup_steam_sync() -> None:
     global steam_sync_task
     backfill_vac_live_fault_records()
+    cleanup_expired_vac_live_faults()
     if not settings.steam_api_key:
         return
     if steam_sync_task is None or steam_sync_task.done():
@@ -1277,6 +1324,7 @@ def change_password(payload: ChangePasswordRequest, user: User = Depends(get_cur
 async def create_account(
     payload: SteamAccountCreate,
     actor: User = Depends(resolve_actor),
+    _: None = Depends(rate_limit),
     db: Session = Depends(get_db),
 ):
     ensure_account_identity_unique(db, username=payload.username, email=payload.email)
@@ -1311,6 +1359,7 @@ async def create_account(
 def mass_import_accounts(
     payload: MassImportRequest,
     actor: User = Depends(resolve_actor),
+    _: None = Depends(rate_limit),
     db: Session = Depends(get_db),
 ):
     errors: list[MassImportError] = []
@@ -1617,6 +1666,7 @@ def update_account(
     account_id: int,
     payload: SteamAccountUpdate,
     user: User = Depends(get_current_user),
+    _: None = Depends(rate_limit),
     db: Session = Depends(get_db),
 ):
     account = db.get(SteamAccount, account_id)
@@ -1673,6 +1723,7 @@ def update_account(
 def delete_account(
     account_id: int,
     user: User = Depends(get_current_user),
+    _: None = Depends(rate_limit),
     db: Session = Depends(get_db),
 ):
     account = db.get(SteamAccount, account_id)

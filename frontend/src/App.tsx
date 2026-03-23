@@ -229,6 +229,60 @@ function parseApiDate(value: string | null | undefined): number | null {
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
+  function validateUsername(username: string): { valid: boolean; error?: string } {
+    const trimmed = username.trim();
+    if (!trimmed) {
+      return { valid: false, error: "Username is required" };
+    }
+    if (trimmed.length < 1 || trimmed.length > 128) {
+      return { valid: false, error: "Username must be 1-128 characters" };
+    }
+    return { valid: true };
+  }
+
+  function validateEmail(email: string): { valid: boolean; error?: string } {
+    const trimmed = email.trim();
+    if (!trimmed) {
+      return { valid: false, error: "Email is required" };
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      return { valid: false, error: "Email format is invalid" };
+    }
+    return { valid: true };
+  }
+
+  function validatePassword(password: string): { valid: boolean; error?: string } {
+    if (!password) {
+      return { valid: false, error: "Password is required" };
+    }
+    if (password.length < 1 || password.length > 255) {
+      return { valid: false, error: "Password must be 1-255 characters" };
+    }
+    return { valid: true };
+  }
+
+  function validateSteamId(steamId: string): { valid: boolean; error?: string } {
+    const trimmed = steamId.trim();
+    if (!trimmed) {
+      return { valid: true };
+    }
+    if (!/^\d{17}$/.test(trimmed)) {
+      return { valid: false, error: "Steam ID must be exactly 17 digits" };
+    }
+    return { valid: true };
+  }
+
+  function validateVACLiveFields(banType: BanType, vac_live_value: string): { valid: boolean; error?: string } {
+    if (banType !== "VACLive") {
+      return { valid: true };
+    }
+    const value = Number(vac_live_value);
+    if (!Number.isFinite(value) || value < 1 || value > 365) {
+      return { valid: false, error: "VAC Live duration must be 1-365" };
+    }
+    return { valid: true };
+  }
+
 function normalizeBanType(value: string | null | undefined, fallbackStatus?: string | null): BanType {
   const normalized = (value ?? "").trim().toLowerCase();
   if (normalized === "vac") {
@@ -474,6 +528,9 @@ function App() {
     is_public: false,
     is_prime: false,
   });
+    const [banChangeWarningOpen, setBanChangeWarningOpen] = useState(false);
+    const [originalBanType, setOriginalBanType] = useState<BanType>("None");
+    const [pendingEditAccount, setPendingEditAccount] = useState<typeof editAccount | null>(null);
 
   const [registerUsername, setRegisterUsername] = useState("");
   const [registerEmail, setRegisterEmail] = useState("");
@@ -1093,6 +1150,32 @@ function App() {
     event.preventDefault();
     setError("");
 
+      const usernameVal = validateUsername(newAccount.username);
+      if (!usernameVal.valid) {
+        setError(usernameVal.error || "Invalid username");
+        return;
+      }
+      const emailVal = validateEmail(newAccount.email);
+      if (!emailVal.valid) {
+        setError(emailVal.error || "Invalid email");
+        return;
+      }
+      const passwordVal = validatePassword(newAccount.password);
+      if (!passwordVal.valid) {
+        setError(passwordVal.error || "Invalid password");
+        return;
+      }
+      const steamIdVal = validateSteamId(newAccount.steam_id);
+      if (!steamIdVal.valid) {
+        setError(steamIdVal.error || "Invalid Steam ID");
+        return;
+      }
+      const vacLiveVal = validateVACLiveFields(newAccount.ban_type, newAccount.vac_live_value);
+      if (!vacLiveVal.valid) {
+        setError(vacLiveVal.error || "Invalid VAC Live settings");
+        return;
+      }
+
     try {
       const payload: Record<string, unknown> = {
         username: newAccount.username,
@@ -1278,6 +1361,7 @@ function App() {
   const startEditAccount = (account: Account) => {
     const normalizedBanType = normalizeBanType(account.ban_type, account.ban_status);
     setEditingAccountId(account.id);
+      setOriginalBanType(normalizedBanType);
     setEditAccount({
       username: account.username,
       password: isAccountOnline(account) ? "" : account.password,
@@ -1300,28 +1384,63 @@ function App() {
     }
 
     setError("");
+      if (editAccount.ban_type !== originalBanType) {
+        setPendingEditAccount(editAccount);
+        setBanChangeWarningOpen(true);
+        return;
+      }
+
+      await performAccountUpdate(editAccount);
+    };
+
+    const performAccountUpdate = async (accountData: typeof editAccount) => {
+      if (!editingAccountId) {
+        return;
+      }
+
+        const usernameVal = validateUsername(accountData.username);
+        if (!usernameVal.valid) {
+          setError(usernameVal.error || "Invalid username");
+          return;
+        }
+        const emailVal = validateEmail(accountData.email);
+        if (!emailVal.valid) {
+          setError(emailVal.error || "Invalid email");
+          return;
+        }
+        const steamIdVal = validateSteamId(accountData.steam_id);
+        if (!steamIdVal.valid) {
+          setError(steamIdVal.error || "Invalid Steam ID");
+          return;
+        }
+        const vacLiveVal = validateVACLiveFields(accountData.ban_type, accountData.vac_live_value);
+        if (!vacLiveVal.valid) {
+          setError(vacLiveVal.error || "Invalid VAC Live settings");
+          return;
+        }
+
     try {
       const payload: Record<string, unknown> = {
-        username: editAccount.username,
-        email: editAccount.email,
-        ban_type: editAccount.ban_type,
-        matchmaking_ready: editAccount.matchmaking_ready,
-        is_public: editAccount.is_public,
-        is_prime: editAccount.is_prime,
+          username: accountData.username,
+          email: accountData.email,
+          ban_type: accountData.ban_type,
+          matchmaking_ready: accountData.matchmaking_ready,
+          is_public: accountData.is_public,
+          is_prime: accountData.is_prime,
       };
-      const normalizedPassword = editAccount.password.trim();
+        const normalizedPassword = accountData.password.trim();
       if (normalizedPassword) {
         payload.password = normalizedPassword;
       }
-      const normalizedSteamId = editAccount.steam_id.trim();
+        const normalizedSteamId = accountData.steam_id.trim();
       if (normalizedSteamId) {
         payload.steam_id = normalizedSteamId;
       }
-      if (editAccount.ban_type === "VACLive") {
-        payload.vac_live_value = Number(editAccount.vac_live_value);
-        payload.vac_live_unit = editAccount.vac_live_unit;
-        if (editAccount.vac_live_fault_user_id) {
-          payload.vac_live_fault_user_id = Number(editAccount.vac_live_fault_user_id);
+        if (accountData.ban_type === "VACLive") {
+          payload.vac_live_value = Number(accountData.vac_live_value);
+          payload.vac_live_unit = accountData.vac_live_unit;
+          if (accountData.vac_live_fault_user_id) {
+            payload.vac_live_fault_user_id = Number(accountData.vac_live_fault_user_id);
         }
       }
 
@@ -1330,8 +1449,13 @@ function App() {
         body: JSON.stringify(payload),
       });
       setEditingAccountId(null);
+        setBanChangeWarningOpen(false);
+        setPendingEditAccount(null);
+      showUiNotice("✓ Account updated successfully");
       await loadAccounts();
     } catch (requestError) {
+        setBanChangeWarningOpen(false);
+        setPendingEditAccount(null);
       setError(requestError instanceof Error ? requestError.message : "Unexpected update error");
     }
   };
@@ -2007,12 +2131,12 @@ function App() {
   }, [viewMode, paginatedAccounts.length]);
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-zinc-950 px-4 py-8 text-zinc-100">
+    <div className="relative min-h-screen overflow-hidden px-4 py-8 text-zinc-100">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(244,114,182,0.18),transparent_45%),radial-gradient(circle_at_15%_20%,rgba(99,102,241,0.25),transparent_42%)]" />
       <div className="pointer-events-none absolute inset-0 opacity-20 [background-image:linear-gradient(to_right,rgba(255,255,255,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.06)_1px,transparent_1px)] [background-size:22px_22px]" />
 
       <div className="relative mx-auto max-w-[1700px] space-y-6">
-        <header className="anime-panel rounded-3xl p-6">
+        <header className="anime-panel surface-glow rounded-3xl p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-4">
               <img src={kuroiLogo} alt="kuroi logo" className="h-14 w-14 rounded-2xl border border-fuchsia-300/40 bg-zinc-950/90 p-1" />
@@ -2101,9 +2225,9 @@ function App() {
         </header>
 
         {!isLoggedIn ? (
-          <div className="mx-auto w-full max-w-xl anime-panel rounded-3xl p-6">
+          <div className="mx-auto w-full max-w-xl anime-panel surface-glow rounded-3xl p-6">
             {sessionNotice && (
-              <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-amber-300/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+              <div className="toast-warning mb-4 flex items-center justify-between gap-3 text-sm">
                 <span>{sessionNotice}</span>
                 <button
                   type="button"
@@ -2250,7 +2374,7 @@ function App() {
               <LeaderboardPage token={token} />
             ) : (
             <HomePage>
-            <div className="anime-panel space-y-4 rounded-3xl p-4">
+            <div className="anime-panel surface-glow space-y-4 rounded-3xl p-4">
               <div className="grid gap-3 xl:grid-cols-[1.2fr_180px_220px_auto]">
                 <div className="flex items-center gap-2">
                   <input
@@ -2629,7 +2753,7 @@ function App() {
               </div>
             </div>
 
-            <div className="anime-panel space-y-4 rounded-3xl p-4">
+            <div className="anime-panel surface-glow space-y-4 rounded-3xl p-4">
               <button
                 type="button"
                 className="flex w-full items-center justify-between rounded-2xl border border-fuchsia-300/40 bg-fuchsia-500/10 px-4 py-3 text-left text-sm text-fuchsia-100 hover:bg-fuchsia-500/20"
@@ -2789,11 +2913,11 @@ function App() {
           </div>
         )}
 
-        {error && <div className="rounded-xl border border-rose-300/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div>}
+        {error && <div className="toast-error text-sm">{error}</div>}
       </div>
 
       {uiNotice && (
-        <div className="fixed bottom-4 right-4 z-40 rounded-xl border border-emerald-300/40 bg-emerald-500/15 px-3 py-2 text-xs text-emerald-100 shadow-lg backdrop-blur-sm">
+        <div className="toast-success fixed bottom-4 right-4 z-40 text-xs">
           {uiNotice}
         </div>
       )}
@@ -2946,6 +3070,41 @@ function App() {
           </div>
         </div>
       )}
+
+        {banChangeWarningOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 backdrop-blur-sm px-4">
+            <div className="anime-panel w-full max-w-md rounded-3xl p-6 space-y-6">
+              <div>
+                <h2 className="mb-3 text-lg font-semibold text-yellow-400">Ban Status Change</h2>
+                <div className="space-y-2 text-sm text-zinc-300">
+                  <p>You're changing the ban status from <span className="font-medium text-zinc-100">{originalBanType}</span> to <span className="font-medium text-zinc-100">{pendingEditAccount?.ban_type}</span>.</p>
+                  <p className="text-yellow-400/80">This is a destructive action. Please confirm that this is intentional.</p>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    setBanChangeWarningOpen(false);
+                    setPendingEditAccount(null);
+                  }}
+                  className="flex-1 anime-secondary-button"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    if (pendingEditAccount) {
+                      void performAccountUpdate(pendingEditAccount);
+                    }
+                  }}
+                  className="flex-1 anime-primary-button bg-yellow-600/30 hover:bg-yellow-600/50 border-yellow-500/50"
+                >
+                  Confirm Change
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
       {editingAccountId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 backdrop-blur-sm px-4">

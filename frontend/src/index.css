@@ -2,8 +2,44 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --kuroi-bg-1: #08090f;
+  --kuroi-bg-2: #0c1022;
+  --kuroi-bg-3: #1d1230;
+}
+
 body {
-  @apply bg-zinc-950 text-zinc-100 antialiased;
+  font-family: "Space Grotesk", "Segoe UI", "Helvetica Neue", sans-serif;
+  background:
+    radial-gradient(1200px 700px at 8% -8%, color-mix(in oklab, #60a5fa 24%, transparent), transparent 58%),
+    radial-gradient(1300px 760px at 92% -14%, color-mix(in oklab, #f472b6 24%, transparent), transparent 57%),
+    linear-gradient(155deg, var(--kuroi-bg-1) 0%, var(--kuroi-bg-2) 45%, var(--kuroi-bg-3) 100%);
+  @apply text-zinc-100 antialiased;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  opacity: 0.18;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 26px 26px;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  opacity: 0.14;
+  background-image: radial-gradient(circle at center, rgba(255, 255, 255, 0.35) 0.5px, transparent 0.5px);
+  background-size: 3px 3px;
+  mask-image: radial-gradient(circle at center, rgba(0, 0, 0, 1), rgba(0, 0, 0, 0.2) 74%, rgba(0, 0, 0, 0) 100%);
 }
 
 @keyframes prime-gold-glow {
@@ -69,21 +105,63 @@ body {
   }
 }
 
+@keyframes kuroi-rise-in {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 @layer components {
   .anime-panel {
-    @apply border border-zinc-700/60 bg-zinc-900/60 shadow-2xl shadow-indigo-950/30 backdrop-blur-sm;
+    @apply border border-zinc-700/60 bg-zinc-900/55 shadow-2xl shadow-slate-950/50 backdrop-blur-md;
+    background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0));
+    animation: kuroi-rise-in 240ms ease-out;
   }
 
   .anime-input {
-    @apply rounded-xl border border-zinc-700 bg-zinc-950/90 px-3 py-2 text-zinc-100 outline-none ring-indigo-500/70 transition focus:ring;
+    @apply rounded-xl border border-zinc-600/75 bg-zinc-950/90 px-3 py-2 text-zinc-100 outline-none transition duration-200;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+
+  .anime-input::placeholder {
+    @apply text-zinc-400;
+  }
+
+  .anime-input:focus {
+    @apply border-sky-300/70 ring-2 ring-sky-400/40;
   }
 
   .anime-primary-button {
-    @apply rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-4 py-2 font-medium text-white transition hover:from-indigo-400 hover:to-fuchsia-400;
+    @apply rounded-xl px-4 py-2 font-semibold text-white transition duration-200;
+    background-image: linear-gradient(95deg, rgb(14 165 233 / 1) 0%, rgb(99 102 241 / 1) 46%, rgb(217 70 239 / 1) 100%);
+    box-shadow: 0 10px 22px rgba(56, 189, 248, 0.18), 0 2px 0 rgba(255, 255, 255, 0.12) inset;
+  }
+
+  .anime-primary-button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 16px 26px rgba(56, 189, 248, 0.22), 0 2px 0 rgba(255, 255, 255, 0.16) inset;
+  }
+
+  .anime-primary-button:disabled {
+    @apply cursor-not-allowed opacity-60;
+    transform: none;
+    box-shadow: none;
   }
 
   .anime-secondary-button {
-    @apply rounded-xl border border-zinc-600 bg-zinc-900/70 px-4 py-2 font-medium text-zinc-100 transition hover:bg-zinc-800;
+    @apply rounded-xl border border-zinc-500/70 bg-zinc-900/80 px-4 py-2 font-medium text-zinc-100 transition duration-200;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  .anime-secondary-button:hover {
+    @apply border-zinc-400/80 bg-zinc-800/80;
+    transform: translateY(-1px);
   }
 
   .anime-checkbox {
@@ -98,6 +176,30 @@ body {
     background-repeat: no-repeat;
     background-position: center, center;
     background-size: 0.7rem 0.7rem, cover;
+  }
+
+  .toast-error {
+    @apply rounded-xl border border-rose-400/60 bg-rose-950/45 px-4 py-3 text-rose-100 shadow-lg shadow-rose-950/35 backdrop-blur-sm;
+  }
+
+  .toast-success {
+    @apply rounded-xl border border-emerald-400/60 bg-emerald-950/45 px-4 py-3 text-emerald-100 shadow-lg shadow-emerald-950/35 backdrop-blur-sm;
+  }
+
+  .toast-warning {
+    @apply rounded-xl border border-amber-400/60 bg-amber-950/45 px-4 py-3 text-amber-100 shadow-lg shadow-amber-950/35 backdrop-blur-sm;
+  }
+
+  .toast-info {
+    @apply rounded-xl border border-sky-400/60 bg-sky-950/45 px-4 py-3 text-sky-100 shadow-lg shadow-sky-950/35 backdrop-blur-sm;
+  }
+
+  .btn-loading {
+    @apply pointer-events-none opacity-60;
+  }
+
+  .spinner {
+    @apply inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent;
   }
 
   .prime-name-aura {
@@ -180,5 +282,20 @@ body {
     box-shadow:
       inset 28px 0 44px rgba(0, 0, 0, 0.36),
       -1px 0 0 rgba(255, 255, 255, 0.03);
+  }
+
+  .surface-glow {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .surface-glow::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    pointer-events: none;
+    border-radius: inherit;
+    background: radial-gradient(550px 200px at 10% 0%, rgba(56, 189, 248, 0.12), transparent 60%);
+    opacity: 0.9;
   }
 }
