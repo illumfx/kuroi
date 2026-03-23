@@ -20,7 +20,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from jose import JWTError, jwt
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from sqlalchemy import inspect
+from sqlalchemy import delete, inspect
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
@@ -274,7 +274,45 @@ def ensure_account_unique_constraints() -> None:
         ) from exc
 
 
+def ensure_account_delete_cascades() -> None:
+    if engine.dialect.name != "postgresql":
+        return
+
+    fk_specs = [
+        ("vac_live_faults", "vac_live_faults_account_id_fkey"),
+        ("account_suggestions", "account_suggestions_account_id_fkey"),
+    ]
+
+    with engine.begin() as connection:
+        for table_name, canonical_fk_name in fk_specs:
+            existing_fk_names = connection.execute(
+                text(
+                    "SELECT c.conname "
+                    "FROM pg_constraint c "
+                    "JOIN pg_class t ON t.oid = c.conrelid "
+                    "JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(c.conkey) "
+                    "JOIN pg_class rt ON rt.oid = c.confrelid "
+                    "WHERE c.contype = 'f' "
+                    "AND t.relname = :table_name "
+                    "AND rt.relname = 'steam_accounts' "
+                    "AND a.attname = 'account_id'"
+                ),
+                {"table_name": table_name},
+            ).scalars().all()
+
+            for constraint_name in existing_fk_names:
+                connection.exec_driver_sql(f"ALTER TABLE {table_name} DROP CONSTRAINT IF EXISTS {constraint_name}")
+
+            connection.exec_driver_sql(
+                "ALTER TABLE "
+                f"{table_name} "
+                f"ADD CONSTRAINT {canonical_fk_name} "
+                "FOREIGN KEY (account_id) REFERENCES steam_accounts(id) ON DELETE CASCADE"
+            )
+
+
 ensure_schema_extensions()
+ensure_account_delete_cascades()
 ensure_account_unique_constraints()
 validate_runtime_config()
 
@@ -1734,6 +1772,9 @@ def delete_account(
     if account.owner_id != user.id:
         raise HTTPException(status_code=403, detail="Only the account owner can delete this account")
 
+    # Remove child records explicitly before deleting the parent account.
+    db.execute(delete(VacLiveFault).where(VacLiveFault.account_id == account.id))
+    db.execute(delete(AccountSuggestion).where(AccountSuggestion.account_id == account.id))
     db.delete(account)
     db.commit()
 

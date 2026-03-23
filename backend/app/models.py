@@ -114,7 +114,7 @@ class VacLiveFault(Base):
     __tablename__ = "vac_live_faults"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    account_id: Mapped[int] = mapped_column(ForeignKey("steam_accounts.id"), index=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("steam_accounts.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     ban_expires_at: Mapped[datetime] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -128,7 +128,7 @@ class AccountSuggestion(Base):
     __tablename__ = "account_suggestions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    account_id: Mapped[int] = mapped_column(ForeignKey("steam_accounts.id"), index=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("steam_accounts.id", ondelete="CASCADE"), index=True)
     suggested_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     suggested_ban_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
     suggested_vac_live_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
